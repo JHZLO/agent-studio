@@ -12,7 +12,31 @@ export const agentSchema = z.object({
 });
 export const executionSchema = z.object({ mode: z.enum(["local", "worktree"]), baseRef: z.string().nullable().optional(), branchName: z.string().max(200).default("") });
 export const projectSchema = z.object({ id: z.string().min(1).max(100), name: z.string().trim().min(1).max(100), path: z.string().min(1).max(4096), execution: executionSchema }).passthrough();
-export const flowSchema = z.object({ id: z.string().min(1).max(100), name: z.string().trim().min(1).max(100), workflow: z.array(z.string()).max(12), archived: z.boolean().default(false) });
+export const flowRuleSchema = z.object({
+  after: z.string(), review: z.enum(["auto", "always", "on_issue"]).default("auto"),
+  lockOutputs: z.boolean().default(false), returnTo: z.string().optional(),
+  loop: z.object({ target: z.string(), maxCycles: z.number().int().min(1).max(10), onLimit: z.enum(["review", "stop"]) }).optional(),
+});
+export const flowSchema = z.object({
+  id: z.string().min(1).max(100), name: z.string().trim().min(1).max(100), workflow: z.array(z.string()).max(12), archived: z.boolean().default(false),
+  revision: z.number().int().positive().default(1), rules: z.array(flowRuleSchema).max(12).default([]),
+}).superRefine((flow, ctx) => {
+  const issue = (message: string) => ctx.addIssue({ code: "custom", message });
+  if (new Set(flow.rules.map(rule => rule.after)).size !== flow.rules.length) issue("Each step can have only one flow rule.");
+  const ranges: number[][] = [];
+  for (const rule of flow.rules) {
+    const end = flow.workflow.indexOf(rule.after);
+    if (end < 0) issue("Flow rules must reference a step in this flow.");
+    if (rule.returnTo && (flow.workflow.indexOf(rule.returnTo) < 0 || flow.workflow.indexOf(rule.returnTo) > end)) issue("Revision requests must return to this step or an earlier step.");
+    if (rule.lockOutputs && rule.review !== "always") issue("Locking outputs requires a review after every completion.");
+    if (rule.loop) {
+      const start = flow.workflow.indexOf(rule.loop.target);
+      if (start < 0 || start >= end) issue("A loop must return to an earlier step.");
+      if (ranges.some(([a, b]) => start <= b && end >= a)) issue("Loop ranges cannot overlap. Use one loop for the shared steps.");
+      ranges.push([start, end]);
+    }
+  }
+});
 export const settingsSchema = z.object({
   version: z.literal(1), agents: z.array(agentSchema).min(1).max(100), flows: z.array(flowSchema).min(1).max(100),
   activeFlowId: z.string(), projects: z.array(projectSchema).max(100), activeProjectId: z.string().nullable(),
@@ -33,14 +57,18 @@ export type Binding = z.infer<typeof bindingSchema> & { sourcePath?: string };
 export type Project = z.infer<typeof projectSchema>;
 export type SubscriptionUsage = { status: "available" | "unavailable"; checkedAt: string; windows: { label: string; remainingPercent: number; resetsAt?: string }[]; message?: string };
 export type Connection = { id: string; provider: "codex" | "claude"; auth: "subscription" | "api"; connected: boolean; models: string[]; modelDetails?: { value: string; displayName: string; resolvedModel?: string; supportsFastMode?: boolean }[]; account?: { email?: string; plan?: string; organization?: string }; usage?: SubscriptionUsage; checkedAt?: string; error?: string; version?: string; billingMode: string; credentialStorage?: string };
-export type Status = "queued" | "running" | "waiting_approval" | "paused" | "cancelling" | "cancelled" | "succeeded" | "failed" | "needs_reconciliation";
+export type Status = "queued" | "running" | "waiting_approval" | "waiting_review" | "paused" | "cancelling" | "cancelled" | "succeeded" | "failed" | "needs_reconciliation";
 export type Message = { id: string; type: "assistant" | "user" | "tool" | "system"; text: string; time: string };
 export type LocalProject = { key: string; name: string; path: string; providers: ("codex" | "claude")[]; available: boolean };
 export type LocalSession = { key: string; provider: "codex" | "claude"; sourceId: string; title: string; projectKey: string; cwd: string; updatedAt: string };
 export type ImportedSession = LocalSession & { project: Project; importedAt: string; messages: Message[]; truncated: boolean };
-export type Artifact = { id: string; name: string; type: string; content: string; agent: string; stepId: string; codeReference?: string; mediaPath?: string; mime?: string; verified?: boolean; stale?: boolean };
-export type Step = { id: string; agent: Agent; status: Status; sessionId: string; messages: Message[]; receivedArtifacts: { id: string; name: string }[]; providerThreadId?: string; activeTurnId?: string; lastTurnId?: string; socketPath?: string; hostPid?: number; connectionGeneration?: string; accountFingerprint?: string; actualModel?: string; actualServiceTier?: string; codeReference?: string; usage?: Record<string, unknown>; finalText?: string; completedAt?: string };
+export type Artifact = { id: string; name: string; type: string; content: string; agent: string; stepId: string; codeReference?: string; mediaPath?: string; mime?: string; verified?: boolean; stale?: boolean; superseded?: boolean };
+export type Step = { id: string; agent: Agent; status: Status; sessionId: string; messages: Message[]; receivedArtifacts: { id: string; name: string }[]; providerThreadId?: string; activeTurnId?: string; lastTurnId?: string; socketPath?: string; hostPid?: number; connectionGeneration?: string; accountFingerprint?: string; actualModel?: string; actualServiceTier?: string; codeReference?: string; usage?: Record<string, unknown>; finalText?: string; completedAt?: string; attempt?: number; feedback?: string; feedbackArtifactIds?: string[]; reviewRequired?: boolean; decision?: "pass" | "revise" | "scope_change" };
+export type FlowReview = { id: string; stepId: string; kind: "checkpoint" | "issue" | "loop_limit" | "scope_change"; artifactIds: string[]; fingerprint: string; version: number; returnTo: string; lockOutputs: boolean; summary: string; createdAt: string; codeReference: string };
 export type Approval = { id: string; stepId: string; kind: "write" | "shell" | "network" | "provider"; description: string; details: string; generation?: string; requestId?: string | number; method?: string };
-export type Run = { id: string; brief: string; project: Project; projectRules?: string[]; flow: z.infer<typeof flowSchema>; status: Status; createdAt: string; completedAt?: string; index: number; steps: Step[]; artifacts: Artifact[]; note: string; cwd: string; baseHead: string | null; approvalRequired: boolean; approval?: Approval; approved: boolean; pauseRequested: boolean; controlMode: "studio" | "terminal" | "switching"; eventSeq: number; terminal?: { id: string; stepId: string; connected: boolean; socketPath?: string; pid?: number }; commandId: string };
-export const activeStatuses: Status[] = ["queued", "running", "waiting_approval", "paused", "cancelling", "needs_reconciliation"];
+export type Run = { id: string; brief: string; project: Project; projectRules?: string[]; flow: z.infer<typeof flowSchema>; status: Status; createdAt: string; completedAt?: string; index: number; steps: Step[]; artifacts: Artifact[]; note: string; cwd: string; baseHead: string | null; approvalRequired: boolean; approval?: Approval; approved: boolean; pauseRequested: boolean; controlMode: "studio" | "terminal" | "switching"; eventSeq: number; terminal?: { id: string; stepId: string; connected: boolean; socketPath?: string; pid?: number }; commandId: string;
+  review?: FlowReview; reviewHistory?: (FlowReview & { action: "approved" | "revision_requested"; feedback?: string; resolvedAt: string })[];
+  stepHistory?: Step[]; loopCounts?: Record<string, number>; lockedPlan?: { version: number; stepId: string; artifactIds: string[] };
+};
+export const activeStatuses: Status[] = ["queued", "running", "waiting_approval", "waiting_review", "paused", "cancelling", "needs_reconciliation"];
 export const now = () => new Date().toISOString();

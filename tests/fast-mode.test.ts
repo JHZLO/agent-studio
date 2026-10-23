@@ -34,6 +34,7 @@ async function session(t: test.TestContext, mode: Agent["codexFastMode"], tier: 
     if (method === "thread/start") return { thread: { id: "thread" }, model: "resolved-model", serviceTier: tier };
     if (method === "model/list") return { data: [{ model: "resolved-model", serviceTiers: supported ? [{ id: "priority" }] : [] }] };
     assert.equal(method, "turn/start");
+    assert.deepEqual([...params.outputSchema.required].sort(), Object.keys(params.outputSchema.properties).sort());
     queueMicrotask(() => {
       const event = (method: string, params: Wire) => (studio as any).codexEvent(run, { method, params: { threadId: "thread", ...params } });
       event("turn/started", { turn: { id: "turn" } });
