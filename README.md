@@ -2,7 +2,19 @@
 
 A personal workspace for defining AI agents, connecting them into workflows, and inspecting their work.
 
-**Status:** Repository bootstrap. The application is not implemented yet. The technology stack and upstream components are still under evaluation.
+**Status:** An interactive, browser-only prototype is available. The production execution engine and real AI connections are not implemented yet.
+
+## Try the prototype
+
+Open [`prototype/index.html`](prototype/index.html) in a modern browser, or run:
+
+```bash
+python3 -m http.server 4177 --bind 127.0.0.1 --directory prototype
+```
+
+Visit `http://127.0.0.1:4177/`. Edit agent presets, connect a workflow, run a scripted demo, approve changes, and inspect sessions and artifacts. No API keys or package installation are required.
+
+See the [prototype guide](prototype/README.md) for the offline export command and simulation boundaries.
 
 ## Planned capabilities
 
@@ -26,7 +38,7 @@ A personal workspace for defining AI agents, connecting them into workflows, and
 
 ## Development
 
-Build, run, and test commands will be added when the initial implementation is selected.
+The product will start as a local web application with separate UI, local API, and execution engine boundaries. The browser prototype is a design artifact, not the production runtime.
 
 ## License
 
