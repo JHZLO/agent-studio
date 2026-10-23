@@ -2,6 +2,7 @@ import { roles, models, prompts, initialState, initializeFlows } from "../../pac
 import { initial, StudioEngine, request, queueSettings, flush, reset, removeProject, saveStatus } from "./runtime.js";
 import "./skills.js";
 import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js";
+import { enhanceSelects, closeSelects } from "./selects.js";
 (() => {
   "use strict";
 
@@ -206,6 +207,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
   }
 
   function render(live = false) {
+    closeSelects(app);
     const retainedTerminal = ui.view === "run" && ui.sessionTab === "terminal" ? retainTerminal() : null;
     const focused = document.activeElement;
     const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
@@ -223,6 +225,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
       const next = app.querySelector("#task-brief");
       if (next) next.replaceWith(panel);
     }
+    enhanceSelects(app);
     for (const [className, scrollTop, scrollLeft] of scrollPositions) {
       const element = document.getElementsByClassName(className)[0];
       if (element) { element.scrollTop = scrollTop; element.scrollLeft = scrollLeft; }
@@ -515,15 +518,20 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
   }
 
   function showModal(title, body, footer = "", wide = false, eyebrow = "Agent Studio") {
+    const focusedId = modal.open && modal.contains(document.activeElement) ? document.activeElement.id : null;
+    closeSelects();
     clearTimeout(connectionTimer);
     if (!modal.open) lastFocused = document.activeElement;
     modal.className = wide ? "wide" : "";
     modal.innerHTML = `<div class="modal-head"><div>${eyebrow ? `<div class="eyebrow">${eyebrow}</div>` : ""}<h2 id="modal-title">${title}</h2></div>${button("close-modal", "", "close", "text icon-only", 'aria-label="Close dialog"')}</div><div class="modal-body">${body}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}`;
+    enhanceSelects(modal);
     if (!modal.open) modal.showModal();
+    if (focusedId) modal.querySelector(`#${CSS.escape(focusedId)}`)?.focus({ preventScroll: true });
     if (!modal.contains(document.activeElement)) modal.querySelector("button, input, select, textarea")?.focus();
   }
 
   function closeModal() {
+    closeSelects(modal);
     clearTimeout(connectionTimer);
     if (ui.editingAgentId && ui.pickerTarget) {
       const form = ui.pickerTarget;
@@ -931,7 +939,10 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
       try {
         const connection = await checkConnection(provider, auth);
         if (!connection.connected) throw new Error(connection.error || "Connect this account in Connections first.");
-        if (form.isConnected && form.elements.connection.value === `${provider}|${auth}`) form.elements.model.innerHTML = modelOptions(provider, auth, form.elements.model.value);
+        if (form.isConnected && form.elements.connection.value === `${provider}|${auth}`) {
+          form.elements.model.innerHTML = modelOptions(provider, auth, form.elements.model.value);
+          enhanceSelects(form);
+        }
         toast(`${connection.models.length} models reported by your runtime.`);
       } catch (error) { toast(error.message); }
       finally { target.disabled = false; }
@@ -1060,6 +1071,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     if (event.target.id === "agent-connection") {
       const provider = event.target.value.split("|")[0];
       event.target.closest("form").querySelector('[name="model"]').innerHTML = modelOptions(provider, event.target.value.split("|")[1]);
+      enhanceSelects(event.target.closest("form"));
     }
     if (event.target.id === "connection-provider") { ui.connectProvider = event.target.value; connectionModal(); }
   });

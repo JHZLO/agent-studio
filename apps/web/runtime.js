@@ -17,7 +17,7 @@ export const bootstrap = async () => {
 export const initial = await bootstrap().catch(error => {
   const panel = document.getElementById("app");
   panel.textContent = "The local service is unavailable. Start Agent Studio, then retry. ";
-  const retry = document.createElement("button"); retry.textContent = "Retry"; retry.addEventListener("click", () => location.reload()); panel.append(retry);
+  const retry = document.createElement("button"); retry.className = "btn"; retry.textContent = "Retry"; retry.addEventListener("click", () => location.reload()); panel.append(retry);
   throw error;
 });
 revision = initial.state.revision;
