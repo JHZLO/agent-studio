@@ -5,7 +5,7 @@ Checked on 2026-10-23, macOS arm64. Implementation, automated checks, and live p
 ## Local checks
 
 - Strict TypeScript and the production Vite build pass.
-- The 17-test model-free suite covers persistence, command deduplication, uncertain outcomes, concurrent starts, history retrieval, skill snapshots, project validation, worktree isolation, file permissions, recovery boundaries, native Codex process ownership, API security, real Chromium evidence, and bounded k6 execution.
+- The 18-test model-free suite covers persistence, command deduplication, uncertain outcomes, concurrent starts, history retrieval, skill snapshots, project validation, worktree isolation and source instructions, file permissions, recovery boundaries, native Codex process ownership, API security, real Chromium evidence, and bounded k6 execution.
 - npm audit reports zero known vulnerabilities for the installed dependency graph.
 - The rebuilt k6 binary has zero affected symbols and imported packages. One unused module advisory remains. See [security details](security.md).
 - GitHub Actions runs setup, type checks, build, tests, and both dependency audits. A local pass is not a claim that a remote workflow has passed.

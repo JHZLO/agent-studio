@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { Store, hash } from "../packages/engine/store.ts";
 import { SkillCatalog } from "../packages/engine/skills.ts";
-import { inspectProject, prepareProject } from "../packages/engine/projects.ts";
+import { inspectProject, prepareProject, projectInstructions } from "../packages/engine/projects.ts";
 import { settingsSchema, type Run } from "../packages/contracts/index.ts";
 import { initialState } from "../packages/contracts/defaults.js";
 import { Toolbox } from "../packages/engine/tools.ts";
@@ -146,4 +146,19 @@ test("Workspace reset preserves registered projects, skill sources and project f
   assert.deepEqual(result.projects, settings.projects); assert.deepEqual(result.skillRoots, settings.skillRoots);
   assert.equal(result.brief, ""); assert.equal(result.run, null); assert.deepEqual(result.connections, []);
   assert.equal(await readFile(join(project, "README.md"), "utf8"), "Keep this project");
+});
+
+test("Worktrees retain ignored source instructions without reading outside project files", async t => {
+  const path = await directory(t), source = join(path, "source"); await mkdir(source); initGit(source);
+  await writeFile(join(source, "AGENTS.md"), "Use the selected project conventions.");
+  const prepared = await prepareProject({ id: "p", name: "Fixture", path: source, execution: { mode: "worktree", baseRef: "HEAD", branchName: "test/instructions" } }, "instructions", path);
+  const snapshot = await projectInstructions(prepared.cwd, source);
+  assert.deepEqual(snapshot, ["AGENTS.md:\nUse the selected project conventions."]);
+  await writeFile(join(source, "AGENTS.md"), "New source instructions");
+  assert.match(snapshot[0], /selected project conventions/);
+  await writeFile(join(prepared.cwd, "AGENTS.md"), "Rules from the chosen worktree revision");
+  assert.deepEqual(await projectInstructions(prepared.cwd, source), ["AGENTS.md:\nRules from the chosen worktree revision"]);
+  await writeFile(join(path, "outside.md"), "Outside instructions");
+  await symlink(join(path, "outside.md"), join(source, "CLAUDE.md"));
+  await assert.rejects(projectInstructions(prepared.cwd, source), /inside the selected project/);
 });

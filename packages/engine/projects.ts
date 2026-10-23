@@ -1,4 +1,4 @@
-import { realpath, stat, readdir, mkdir } from "node:fs/promises";
+import { realpath, stat, readdir, mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, dirname, basename, relative } from "node:path";
 import { execFile } from "node:child_process";
@@ -8,6 +8,20 @@ import { executionSchema } from "../contracts/index.ts";
 const exec = promisify(execFile);
 export const expand = (raw: string) => raw === "~" ? homedir() : raw.startsWith("~/") ? join(homedir(), raw.slice(2)) : raw;
 export const contained = (root: string, path: string) => { const rel = relative(root, path); return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)); };
+export async function projectInstructions(cwd: string, source: string) {
+  const rules: string[] = [];
+  for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+    for (const directory of [...new Set([cwd, source])]) {
+      const path = join(directory, name);
+      const info = await stat(path).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+      if (!info) continue;
+      if (!info.isFile() || !contained(await realpath(directory), await realpath(path))) throw new Error(`${name} must be a file inside the selected project.`);
+      if (info.size > 32000) throw new Error(`${name} exceeds the 32 KB instruction budget. Move supporting detail into selected skills.`);
+      rules.push(`${name}:\n${await readFile(path, "utf8")}`); break;
+    }
+  }
+  return rules;
+}
 export async function folder(raw: unknown) {
   if (typeof raw !== "string" || !raw.trim() || raw.length > 4096 || !isAbsolute(expand(raw))) throw new Error("Use an absolute local folder path.");
   const path = await realpath(expand(raw));

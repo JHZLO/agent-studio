@@ -28,6 +28,8 @@ The existing DOM-based UI and canvas are retained. Replacing them with a UI fram
 
 A Studio run ID, Studio step/session ID, provider thread ID, provider turn ID, connection generation, terminal ID, and event sequence have separate meanings. Starting a task snapshots the project, flow, presets, permissions, and skills. Later settings edits cannot alter that run.
 
+The run also freezes root `AGENTS.md` and `CLAUDE.md` instructions. A worktree uses its selected revision's file when present and falls back to the source project's local file when Git did not include it. Later source edits do not change the saved instructions.
+
 SQLite transactions save a run and its event sequence together. Command IDs deduplicate identical requests. A pending command after a crash is uncertain and cannot be replayed automatically. This does not promise exactly-once behavior from model providers or external commands.
 
 SSE reconnects from a saved sequence and sends current persisted run state. Full conversations are loaded when a task is opened; the history list contains summaries. Logs do not contain hidden model reasoning.
