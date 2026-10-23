@@ -42,7 +42,7 @@ test("Skill identity follows its real path and supporting content changes its ve
   await writeFile(join(root, "first", "SKILL.md"), "---\nname: Shared\ndescription: >\n  A useful\n  skill.\n---\n# Instructions");
   await writeFile(join(root, "first", "references", "guide.md"), "one");
   await symlink(join(root, "first"), join(root, "alias"));
-  const catalog = new SkillCatalog(join(path, "snapshots")); const found = await catalog.scan([root]);
+  const catalog = new SkillCatalog(join(path, "snapshots"), []); const found = await catalog.scan([root]);
   assert.equal(found.skills.length, 1); assert.equal(found.skills[0].description, "A useful skill.");
   const binding = found.skills[0]; await catalog.snapshot([binding]);
   await writeFile(join(root, "first", "references", "guide.md"), "two");
@@ -58,10 +58,98 @@ test("Skill snapshots exclude secrets and symlinks outside their source", async 
   await writeFile(join(path, "outside.md"), "outside");
   await symlink(join(path, "outside.md"), join(root, "safe", "references", "escape.md"));
   await writeFile(join(root, "safe", "references", "credentials.json"), "secret");
-  const catalog = new SkillCatalog(join(path, "snapshots")); const found = await catalog.scan([root]);
+  const catalog = new SkillCatalog(join(path, "snapshots"), []); const found = await catalog.scan([root]);
   const detail = await catalog.detail(found.skills[0].id);
   assert.deepEqual(detail.files.map(f => f.path), ["SKILL.md"]); assert.equal(detail.omitted, 1);
   await assert.rejects(catalog.readSnapshot("../outside.md"));
+});
+test("Plugin skills join local sources, keep stable bindings across updates, and freeze their files", async t => {
+  const path = await directory(t), cache = join(path, "codex/cache"), plugin = join(cache, "example", "backend");
+  async function install(version: string, content: string) {
+    const root = join(plugin, version);
+    await mkdir(join(root, ".codex-plugin"), { recursive: true });
+    await writeFile(join(root, ".codex-plugin/plugin.json"), JSON.stringify({ name: "backend", version, skills: "./skills" }));
+    await mkdir(join(root, "skills", "review", "references"), { recursive: true });
+    await writeFile(join(root, "skills", "review", "SKILL.md"), "---\nname: review\ndescription: Review code\n---\nRead references/guide.md");
+    await writeFile(join(root, "skills", "review", "references/guide.md"), content);
+    return root;
+  }
+  await install("1.9.0", "old");
+  const current = await install("1.10.0", "current");
+  const catalog = new SkillCatalog(join(path, "snapshots"), [{ label: "Codex", path: cache }]);
+  let found = await catalog.scan([]);
+  assert.equal(found.skills.length, 1); assert.deepEqual(found.errors, []);
+  const binding = found.skills[0];
+  assert.equal(binding.name, "backend:review");
+  assert.match(binding.sources[0], /Codex plugin: backend@example \(1\.10\.0\)/);
+  assert.equal((await catalog.detail(binding.id)).fileCount, 2);
+  await catalog.snapshot([binding]);
+  await install("1.11.0", "updated");
+  found = await catalog.scan([]);
+  assert.equal(found.skills.length, 1); assert.equal(found.skills[0].id, binding.id);
+  assert.notEqual(found.skills[0].version, binding.version);
+  await assert.rejects(catalog.snapshot([binding]), /changed/);
+  assert.equal((await catalog.readSnapshot(binding.version)).files.find(file => file.path.endsWith("guide.md"))?.content, "current");
+  await symlink(current, join(plugin, "latest"));
+  found = await catalog.scan([join(current, "skills")]);
+  assert.equal(found.skills.length, 1); assert.equal(found.skills[0].sources.length, 2);
+  assert.equal(found.skills[0].version, binding.version);
+});
+test("Claude plugin discovery follows installed versions and supports custom skill folders", async t => {
+  const path = await directory(t), cache = join(path, "claude/cache"), plugin = join(cache, "example", "design");
+  for (const version of ["1.0.0", "2.0.0"]) {
+    const root = join(plugin, version);
+    await mkdir(join(root, ".claude-plugin"), { recursive: true });
+    await writeFile(join(root, ".claude-plugin/plugin.json"), JSON.stringify({ name: "design", version, skills: ["./custom/direct"] }));
+    for (const skill of ["custom/direct", "skills/default"]) {
+      await mkdir(join(root, skill), { recursive: true });
+      await writeFile(join(root, skill, "SKILL.md"), `---\nname: ${skill.split("/").at(-1)}\n---\nVersion ${version}`);
+    }
+  }
+  await writeFile(join(cache, "../installed_plugins.json"), JSON.stringify({ plugins: { "design@example": [{ scope: "user", installPath: join(plugin, "1.0.0") }] } }));
+  const catalog = new SkillCatalog(join(path, "snapshots"), [{ label: "Claude Code", path: cache }]);
+  const found = await catalog.scan([]);
+  assert.deepEqual(found.errors, []);
+  assert.deepEqual(found.skills.map(skill => skill.name), ["design:default", "design:direct"]);
+  assert.ok(found.skills.every(skill => skill.sources[0].includes("(1.0.0)")));
+  await catalog.snapshot(found.skills);
+  await writeFile(join(cache, "../installed_plugins.json"), JSON.stringify({ plugins: {} }));
+  assert.deepEqual((await catalog.scan([])).skills, []);
+});
+test("Plugin discovery isolates broken packages and rejects paths outside their package", async t => {
+  const path = await directory(t), cache = join(path, "cache"), outside = join(path, "outside");
+  await mkdir(outside); await writeFile(join(outside, "SKILL.md"), "# Outside");
+  for (const name of ["broken", "escape", "linked", "hooks", "valid"]) {
+    const root = join(cache, "example", name, "1.0.0");
+    await mkdir(join(root, ".codex-plugin"), { recursive: true });
+    await writeFile(join(root, ".codex-plugin/plugin.json"), name === "broken" ? "{" : JSON.stringify({ name, skills: name === "escape" ? outside : "./skills" }));
+    if (name === "linked") await symlink(outside, join(root, "skills"));
+    if (name === "valid") {
+      await mkdir(join(root, "skills", "read"), { recursive: true });
+      await writeFile(join(root, "skills", "read", "SKILL.md"), "# Safe");
+    }
+  }
+  const catalog = new SkillCatalog(join(path, "snapshots"), [{ label: "Codex", path: cache }, { label: "Claude Code", path: join(path, "absent") }]);
+  const found = await catalog.scan([]);
+  assert.deepEqual(found.skills.map(skill => skill.name), ["valid:read"]);
+  assert.equal(found.errors.length, 3);
+  assert.equal(found.errors.filter(error => error.message.includes("stay inside")).length, 2);
+});
+test("Skills can retain large reference libraries while enforcing file and bundle limits", async t => {
+  const path = await directory(t), skill = join(path, "skill");
+  await mkdir(join(skill, "references"), { recursive: true }); await writeFile(join(skill, "SKILL.md"), "# Reference library");
+  for (let i = 0; i < 5; i++) await writeFile(join(skill, "references", `${i}.md`), "x".repeat(240 * 1024));
+  const catalog = new SkillCatalog(join(path, "snapshots"), []);
+  let found = await catalog.scan([skill]);
+  assert.equal(found.skills.length, 1); assert.deepEqual(found.errors, []);
+  await catalog.snapshot(found.skills);
+  assert.equal((await catalog.readSnapshot(found.skills[0].version)).files.length, 6);
+  for (let i = 5; i < 18; i++) await writeFile(join(skill, "references", `${i}.md`), "x".repeat(240 * 1024));
+  found = await catalog.scan([skill]);
+  assert.equal(found.skills.length, 0); assert.match(found.errors[0].message, /4 MB limit/);
+  await writeFile(join(skill, "references", "0.md"), "x".repeat(257 * 1024));
+  found = await catalog.scan([skill]);
+  assert.match(found.errors[0].message, /256 KB limit/);
 });
 test("Local projects allow non-Git folders and worktrees require a commit", async t => {
   const path = await directory(t);
