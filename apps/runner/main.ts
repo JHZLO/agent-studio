@@ -23,12 +23,12 @@ await unlink(runnerSocket).catch(error => { if (error.code !== "ENOENT") throw e
 const store = new Store(join(dataDir, "studio.sqlite"));
 const studio = new Studio(store, dataDir, socketDir);
 const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
-const readMethods = new Set(["ping", "state", "events", "catalog", "skill", "snapshot", "snapshots", "folders", "project", "run.read", "artifact"]);
+const readMethods = new Set(["ping", "state", "events", "catalog", "skill", "snapshot", "snapshots", "folders", "project", "run.read", "artifact", "mcp"]);
 app.post("/rpc", async (request, reply) => {
   try {
     const command = z.object({ method: z.string(), input: z.record(z.string(), z.unknown()), commandId: z.string().uuid() }).parse(request.body);
     const input = { ...command.input, commandId: command.commandId };
-    const execute = () => studio.dispatch(command.method, input);
+    const execute = () => command.method === "mcp" ? studio.mcp(input) : studio.dispatch(command.method, input);
     return readMethods.has(command.method) ? await execute() : await store.command(command.commandId, command.method, command.input, execute);
   } catch (error) { return reply.code(400).send({ error: studio.connections.redact((error as Error).message) }); }
 });
