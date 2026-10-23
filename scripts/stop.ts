@@ -1,0 +1,11 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { rpc } from "../packages/engine/ipc.ts";
+import { dataDir } from "../packages/engine/paths.ts";
+const { pid } = await rpc("ping");
+const lock = JSON.parse(await readFile(join(dataDir, "runner.lock"), "utf8"));
+if (lock.pid !== pid) throw new Error("Runner ownership changed. No process was stopped.");
+const { run } = await rpc("state");
+if (run && ["running", "queued", "paused", "waiting_approval", "needs_reconciliation"].includes(run.status)) await rpc("run.control", { id: run.id, action: "cancel" });
+process.kill(pid, "SIGTERM");
+console.log("Runner stopped. Close the API process with Ctrl+C. Saved tasks and project files are preserved.");

@@ -12,7 +12,9 @@
     "setup": "node scripts/install-native.mjs && node scripts/install-k6.mjs && playwright install chromium",
     "test": "node --import tsx --test tests/*.test.ts",
     "probe:codex": "node --import tsx scripts/probe-codex.ts",
-    "audit:k6": "node scripts/audit-k6.mjs"
+    "audit:k6": "node scripts/audit-k6.mjs",
+    "runner": "node --import tsx apps/runner/main.ts",
+    "stop": "node --import tsx scripts/stop.ts"
   },
   "dependencies": {
     "@openai/codex": "0.163.0",

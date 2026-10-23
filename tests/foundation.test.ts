@@ -96,6 +96,20 @@ test("File tools enforce write approval and block escaping paths", async t => {
   await tools.close();
 });
 
+test("Concurrent starts cannot prepare two workflows while account validation is pending", async t => {
+  const { Studio } = await import("../packages/engine/studio.ts");
+  const path = await directory(t), store = new Store(join(path, "state.sqlite")), studio = new Studio(store, path, path);
+  t.after(async () => { await studio.close(); store.close(); });
+  const settings = studio.settings(); settings.projects = [{ id: "project", name: "Fixture", path, execution: { mode: "local", branchName: "" } }]; settings.skillRoots = []; store.set("settings", settings);
+  let release!: (error: Error) => void;
+  const gate = new Promise<void>((_resolve, reject) => { release = reject; }); studio.connections.assertAgent = async () => gate;
+  const input = { projectId: "project", flowId: settings.activeFlowId, brief: "Read only", commandId: "first" };
+  const first = studio.dispatch("run.start", input);
+  await assert.rejects(studio.dispatch("run.start", { ...input, commandId: "second" }), /Only one run/);
+  release(new Error("Account check stopped for this test.")); await assert.rejects(first, /Account check stopped/);
+  assert.equal(store.runs().length, 0);
+});
+
 test("History lists remain small while complete conversations stay retrievable", async t => {
   const path = await directory(t), store = new Store(join(path, "state.sqlite")); t.after(() => store.close());
   const settings = settingsSchema.parse(initialState()); store.set("settings", settings);
@@ -103,4 +117,17 @@ test("History lists remain small while complete conversations stay retrievable",
   store.saveRun(old, "run.completed"); store.saveRun({ ...old, id: "new", createdAt: "2026-01-02", artifacts: [], steps: [] }, "run.completed");
   const state = store.state(); assert.equal(state.history.length, 1); assert.equal(state.history[0].artifactCount, 1);
   assert(JSON.stringify(state.history).length < 1000); assert.equal(store.run("old")!.steps[0].messages[0].text.length, 100000);
+});
+
+test("Workspace reset preserves registered projects, skill sources and project files", async t => {
+  const { Studio } = await import("../packages/engine/studio.ts");
+  const path = await directory(t), project = join(path, "project"); await mkdir(project);
+  await writeFile(join(project, "README.md"), "Keep this project");
+  const store = new Store(join(path, "state.sqlite")), studio = new Studio(store, path, path);
+  t.after(async () => { await studio.close(); store.close(); });
+  const settings = studio.settings(); settings.projects = [{ id: "project", name: "Fixture", path: project, execution: { mode: "local", branchName: "" } }]; settings.activeProjectId = "project"; settings.skillRoots = [join(path, "skills")]; settings.brief = "Discard this draft"; store.set("settings", settings);
+  const result = await studio.dispatch("reset", { commandId: "reset-test" }) as ReturnType<Store["state"]>;
+  assert.deepEqual(result.projects, settings.projects); assert.deepEqual(result.skillRoots, settings.skillRoots);
+  assert.equal(result.brief, ""); assert.equal(result.run, null); assert.deepEqual(result.connections, []);
+  assert.equal(await readFile(join(project, "README.md"), "utf8"), "Keep this project");
 });
