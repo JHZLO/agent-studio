@@ -1,3 +1,4 @@
+import { flowSchema } from "../../packages/contracts/index.ts";
 import { roles, models, prompts, initialState, initializeFlows } from "../../packages/contracts/defaults.js";
 import { initial, StudioEngine, request, queueSettings, flush, reset, removeProject, importLocal, saveStatus } from "./runtime.js";
 import "./skills.js";
@@ -19,7 +20,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
 
   const ui = {
     view: "home", selected: null, artifactId: null, pendingOrder: null,
-    sessionTab: "conversation", step: 0, followRun: true, historyId: null,
+    sessionTab: "conversation", reviewDraft: "", reviewId: null, step: 0, followRun: true, historyId: null,
     linkFrom: null, zoom: null, connectProvider: "codex", connectAuth: "subscription",
     skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", editingAgentId: null, starting: false,
     navigationOpen: false, navigationActions: false,
@@ -99,8 +100,8 @@ import { enhanceSelects, closeSelects } from "./selects.js";
   ];
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
   const button = (action, label, iconName, className = "", data = "", disabled = false) => `<button type="button" class="btn ${className}" data-action="${action}" ${data}${disabled ? " disabled" : ""}>${iconName ? icon(iconName) : ""}${label}</button>`;
-  const statusNames = { needs_reconciliation: "Check recovery", cancelling: "Cancelling", running: "Running", paused: "Paused", waiting_approval: "Needs approval", succeeded: "Completed", failed: "Blocked", cancelled: "Cancelled", queued: "Queued" };
-  const statusBadge = status => `<span class="badge ${["paused", "waiting_approval"].includes(status) ? "amber" : status === "failed" ? "red" : status === "cancelled" ? "gray" : ""}">${status === "running" ? icon("loader", "spinning") : ""}${statusNames[status] || "Ready"}</span>`;
+  const statusNames = { needs_reconciliation: "Check recovery", cancelling: "Cancelling", running: "Running", paused: "Paused", waiting_approval: "Needs approval", waiting_review: "Needs review", succeeded: "Completed", failed: "Blocked", cancelled: "Cancelled", queued: "Queued" };
+  const statusBadge = status => `<span class="badge ${["paused", "waiting_approval", "waiting_review"].includes(status) ? "amber" : status === "failed" ? "red" : status === "cancelled" ? "gray" : ""}">${status === "running" ? icon("loader", "spinning") : ""}${statusNames[status] || "Ready"}</span>`;
   const roleOutputs = { planner: "Plan + QA sheet", coder: "Code changes", reviewer: "Review findings", backend: "API test results", frontend: "Browser QA", documenter: "Final handoff" };
 
   function persist() {
@@ -111,7 +112,12 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     const previous = state.run?.status;
     if (state.run && run && state.run.id !== run.id && !state.history.some(item => item.id === state.run.id)) state.history.unshift(state.run);
     state.run = run;
-    if (ui.followRun && run) ui.step = Math.min(run.index, run.steps.length - 1);
+    if (ui.followRun && run) ui.step = run.review ? run.steps.findIndex(step => step.id === run.review.stepId) : Math.min(run.index, run.steps.length - 1);
+    if (!run?.review && previous === "waiting_review" && run?.status === "running" && ui.sessionTab === "review") ui.sessionTab = "conversation";
+    if (run?.review && run.review.id !== ui.reviewId && !ui.historyId) {
+      ui.reviewId = run.review.id; ui.reviewDraft = ""; ui.sessionTab = "review";
+      ui.step = run.steps.findIndex(step => step.id === run.review.stepId);
+    }
     render(true);
     if (run?.status === "succeeded" && previous && previous !== "succeeded") celebrate();
   }
@@ -213,7 +219,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     const retainedTerminal = ui.view === "run" && ui.sessionTab === "terminal" ? retainTerminal() : null;
     const focused = document.activeElement;
     const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
-    const preserved = live ? [document.getElementById("task-brief")] : [];
+    const preserved = live ? [document.getElementById("task-brief"), document.getElementById("flow-rule-form")] : [];
     const scrollPositions = live ? [...document.querySelectorAll(".session-content, .evidence-body, .run-steps, .canvas-viewport, .sidebar")].map(element => [element.className, element.scrollTop, element.scrollLeft]) : [];
     const viewNames = { home: "New task", team: "Flows", run: "Task details", agents: "Agent library", skills: "Skill library", connections: "AI connections", runs: "Tasks", imported: "Imported sessions", defaults: "Workspace defaults" };
     const entering = renderedView !== ui.view;
@@ -224,8 +230,8 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     syncNavigation();
     for (const panel of preserved) {
       if (!panel) continue;
-      const next = app.querySelector("#task-brief");
-      if (next) next.replaceWith(panel);
+      const next = app.querySelector(`#${panel.id}`);
+      if (next && next.dataset.id === panel.dataset.id) next.replaceWith(panel);
     }
     enhanceSelects(app);
     for (const [className, scrollTop, scrollLeft] of scrollPositions) {
@@ -270,7 +276,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
 
   function builderView() {
     const agent = state.agents.find(item => item.id === ui.selected);
-    return `<div class="builder-grid ${agent ? "with-inspector" : ""}"><section class="panel canvas-panel"><div class="panel-heading"><div class="flow-meta"><h2>${currentFlow().workflow.length} agents</h2><span class="divider"></span><span class="meta">Run in sequence</span></div>${button("library", "Add agent", "plus", "small", "", engine.isActive())}</div><div class="canvas-viewport" aria-label="Agent workflow canvas"><div class="canvas-wrap"><div class="canvas-stage">${canvas()}</div></div></div><div class="canvas-footer"><span class="canvas-tip">${icon("cursor")}${ui.linkFrom ? "Choose a later input to preview the new order. Esc cancels." : "Select a step to change its order. Connect ports to preview a new order."}</span><div class="zoom-controls">${button("zoom-out", "", "minus", "text icon-only", 'aria-label="Zoom out"')}<span class="zoom-value">Fit</span>${button("zoom-in", "", "plus", "text icon-only", 'aria-label="Zoom in"')}${button("fit", "", "fit", "text icon-only", 'aria-label="Fit workflow"')}</div></div></section>
+    return `<div class="builder-grid ${agent ? "with-inspector" : ""}"><section class="panel canvas-panel"><div class="panel-heading"><div class="flow-meta"><h2>${currentFlow().workflow.length} agents</h2><span class="divider"></span><span class="meta">Reviews and bounded loops</span></div>${button("flow-recommended", "Suggested rules", "spark", "small") + button("library", "Add agent", "plus", "small")}</div><div class="canvas-viewport" aria-label="Agent workflow canvas"><div class="canvas-wrap"><div class="canvas-stage">${canvas()}</div></div></div><div class="canvas-footer"><span class="canvas-tip">${icon("cursor")}${ui.linkFrom ? "Choose a later input to preview the new order. Esc cancels." : "Select a step to set reviews, revisions, and execution order."}</span><div class="zoom-controls">${button("zoom-out", "", "minus", "text icon-only", 'aria-label="Zoom out"')}<span class="zoom-value">Fit</span>${button("zoom-in", "", "plus", "text icon-only", 'aria-label="Zoom in"')}${button("fit", "", "fit", "text icon-only", 'aria-label="Fit workflow"')}</div></div></section>
       ${agent ? `<aside class="panel inspector" style="${agentStyle(agent)}" aria-label="Flow step settings"><div class="inspector-header">${agentIcon(agent)}<div><h2>${escape(agent.name)}</h2><p>Step settings</p></div>${button("close-inspector", "", "close", "text icon-only", 'aria-label="Close step settings"')}</div>${stepSettings(agent)}</aside>` : ""}</div><div class="team-footer"><span>${icon("check")}<span id="save-status" role="status">${escape(saveStatus())}</span></span></div>`;
   }
 
@@ -294,7 +300,10 @@ import { enhanceSelects, closeSelects } from "./selects.js";
         const path = pos.row === next.row ? `M ${pos.forward ? pos.x + 208 : pos.x} ${pos.y + 67} H ${pos.forward ? next.x : next.x + 208}` : `M ${pos.x + 104} ${pos.y + 135} V ${next.y}`;
         lines += `<path class="flow-line" d="${path}" marker-end="url(#arrowhead)"/>`;
       }
-      nodes += `<div class="node ${ui.selected === id ? "selected" : ""}" style="${agentStyle(agent)};left:${pos.x}px;top:${pos.y}px"><button class="node-body" data-action="select-agent" data-id="${escape(id)}" aria-label="Step settings for ${escape(agent.name)}" aria-pressed="${ui.selected === id}"><span class="node-top">${agentIcon(agent)}<span class="node-name">${escape(agent.name)}</span></span><span class="node-output">${roleOutputs[agent.role]}</span><span class="node-bottom"><span class="node-status">${providerName(agent.provider)}</span><span class="node-number">${String(index + 1).padStart(2, "0")}</span></span></button><button class="port ${inputSide}" data-action="connect-to" data-id="${escape(id)}" aria-label="Connect to ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button><button class="port ${outputSide} ${ui.linkFrom === id ? "linking" : ""}" data-action="connect-from" data-id="${escape(id)}" aria-label="Connect from ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button></div>`;
+      const rule = currentFlow().rules?.find(item => item.after === id);
+      nodes += `<div class="node ${ui.selected === id ? "selected" : ""}" style="${agentStyle(agent)};left:${pos.x}px;top:${pos.y}px"><button class="node-body" data-action="select-agent" data-id="${escape(id)}" aria-label="Step settings for ${escape(agent.name)}" aria-pressed="${ui.selected === id}"><span class="node-top">${agentIcon(agent)}<span class="node-name">${escape(agent.name)}</span></span><span class="node-output">${roleOutputs[agent.role]}</span><span class="node-bottom"><span class="node-status">${providerName(agent.provider)}</span><span class="node-number">${String(index + 1).padStart(2, "0")}</span></span></button><button class="port ${inputSide}" data-action="connect-to" data-id="${escape(id)}" aria-label="Connect to ${escape(agent.name)}" ></button><button class="port ${outputSide} ${ui.linkFrom === id ? "linking" : ""}" data-action="connect-from" data-id="${escape(id)}" aria-label="Connect from ${escape(agent.name)}" ></button></div>`;
+      nodes += `<button class="flow-rule-chip ${rule?.review && rule.review !== "auto" ? "has-review" : ""}" style="left:${pos.x}px;top:${pos.y + 148}px" data-action="select-agent" data-id="${escape(id)}" aria-label="Configure transition after ${escape(agent.name)}">${icon(rule?.review && rule.review !== "auto" ? "agents" : "arrow")}${rule?.review === "always" ? (rule.lockOutputs ? "Review + lock" : "Human review") : rule?.review === "on_issue" ? "Review on issues" : "Automatic"}</button>`;
+      if (rule?.loop) nodes += `<button class="flow-loop-chip" style="left:${pos.x}px;top:${pos.y + 182}px" data-action="select-agent" data-id="${escape(id)}">${icon("reset")}Back to ${escape(state.agents.find(a => a.id === rule.loop.target)?.name)} / max ${rule.loop.maxCycles}</button>`;
     });
     return `<svg class="connections-svg" viewBox="0 0 820 ${height}" style="height:${height}px" aria-hidden="true"><defs><marker id="arrowhead" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0 0L5 2.5L0 5" fill="none" stroke="#2b2238" stroke-width="1"/></marker></defs>${lines}</svg><div class="flow-caption" style="top:27px">${icon("message")} YOUR BRIEF</div>${nodes}${!currentFlow().workflow.length ? `<div style="padding:100px 70px"><h2>No agents yet</h2><p style="margin-top:15px">Add an agent to create the first step.</p></div>` : ""}`;
   }
@@ -317,7 +326,36 @@ import { enhanceSelects, closeSelects } from "./selects.js";
 
   function stepSettings(agent) {
     const index = currentFlow().workflow.indexOf(agent.id);
-    return `<div class="step-settings"><div class="step-order"><span class="field-label">Step order</span><strong>${index + 1} of ${currentFlow().workflow.length}</strong></div><div class="step-controls">${button("move-up", "Earlier", "up", "small", 'aria-label="Move step earlier"', index === 0 || engine.isActive())}${button("move-down", "Later", "down", "small", 'aria-label="Move step later"', index === currentFlow().workflow.length - 1 || engine.isActive())}</div><dl class="definition-list"><dt>Connection</dt><dd>${providerName(agent.provider)} / ${authName(agent.auth)}</dd><dt>Model</dt><dd>${escape(agent.model)}</dd><dt>Permissions</dt><dd>${permissionLevels[agent.permissionLevel || "ask"].label}</dd>${agent.provider === "codex" ? `<dt>Fast mode</dt><dd>${{ default: "Follow Codex", on: "On", off: "Off" }[agent.codexFastMode || "default"]}</dd>` : ""}<dt>Skills</dt><dd>${agent.skillBindings.length} attached</dd></dl><p class="meta">Edit this agent's instructions, model, skills, and tools in the Agent library.</p>${button("edit-agent", "Edit in Agent library", "edit", "full", `data-id="${escape(agent.id)}"`)}<div class="step-remove">${button("remove-step", "Remove from flow", "trash", "text small", "", engine.isActive())}<p class="meta">The agent stays in your library.</p></div></div>`;
+    return `<div class="step-settings">${flowRuleForm(agent)}<div class="step-order"><span class="field-label">Step order</span><strong>${index + 1} of ${currentFlow().workflow.length}</strong></div><div class="step-controls">${button("move-up", "Earlier", "up", "small", 'aria-label="Move step earlier"', index === 0)}${button("move-down", "Later", "down", "small", 'aria-label="Move step later"', index === currentFlow().workflow.length - 1)}</div><dl class="definition-list"><dt>Connection</dt><dd>${providerName(agent.provider)} / ${authName(agent.auth)}</dd><dt>Model</dt><dd>${escape(agent.model)}</dd><dt>Permissions</dt><dd>${permissionLevels[agent.permissionLevel || "ask"].label}</dd>${agent.provider === "codex" ? `<dt>Fast mode</dt><dd>${{ default: "Follow Codex", on: "On", off: "Off" }[agent.codexFastMode || "default"]}</dd>` : ""}<dt>Skills</dt><dd>${agent.skillBindings.length} attached</dd></dl><p class="meta">Edit this agent's instructions, model, skills, and tools in the Agent library.</p>${button("edit-agent", "Edit in Agent library", "edit", "full", `data-id="${escape(agent.id)}"`)}<div class="step-remove">${button("remove-step", "Remove from flow", "trash", "text small")}<p class="meta">The agent stays in your library.</p></div></div>`;
+  }
+
+  function flowRuleForm(agent) {
+    const flow = currentFlow(), rule = flow.rules?.find(item => item.after === agent.id) || { review: "auto" };
+    const index = flow.workflow.indexOf(agent.id);
+    const choices = flow.workflow.slice(0, index + 1).map(id => state.agents.find(a => a.id === id));
+    const options = (items, value) => items.map(item => `<option value="${escape(item.id)}"${selected(value, item.id)}>${escape(item.name)}</option>`).join("");
+    return `<form id="flow-rule-form" class="flow-rule-form" data-form="flow-rule" data-id="${escape(agent.id)}"><h3>After this step</h3><p class="meta">Rules belong to this flow. Active tasks keep their saved version.</p>
+      <div class="field"><label for="flow-review">Human checkpoint</label><select id="flow-review" name="review">${[["auto", "Continue automatically"], ["always", "Review before continuing"], ["on_issue", "Review if issues remain"]].map(([value, label]) => `<option value="${value}"${selected(rule.review, value)}>${label}</option>`).join("")}</select></div>
+      <label class="flow-lock"><input type="checkbox" name="lockOutputs" ${rule.lockOutputs ? "checked" : ""} ${rule.review !== "always" ? "disabled" : ""}>Lock reviewed outputs</label>
+      <div class="field"><label for="flow-return">Human revision returns to</label><select id="flow-return" name="returnTo"><option value="">Loop start or this step</option>${options(choices, rule.returnTo)}</select></div>
+      <h3>Automatic revisions</h3><div class="field"><label for="flow-loop">If the result needs changes</label><select id="flow-loop" name="loopTarget"><option value="">Ask for human review</option>${options(choices.slice(0, -1), rule.loop?.target)}</select></div>
+      <div class="field"><label for="flow-cycles">Maximum automatic revisions</label><input id="flow-cycles" type="number" name="maxCycles" min="1" max="10" value="${rule.loop?.maxCycles || 3}" required ${rule.loop ? "" : "disabled"}></div>
+      <div class="field"><label for="flow-limit">When the limit is reached</label><select id="flow-limit" name="onLimit" ${rule.loop ? "" : "disabled"}><option value="review"${selected(rule.loop?.onLimit, "review")}>Ask for human review</option><option value="stop"${selected(rule.loop?.onLimit, "stop")}>Stop the task</option></select></div>
+      <p class="meta">Pass continues forward. Revisions run before the checkpoint. Scope changes always need review. Execution errors stop the task.</p><p class="form-error" role="alert" hidden></p><button type="submit" class="btn primary full">Save flow rules</button></form>`;
+  }
+
+  async function saveFlowRule(form) {
+    const values = new FormData(form), flow = currentFlow();
+    const rule = { after: form.dataset.id, review: values.get("review"), lockOutputs: values.has("lockOutputs"), ...(values.get("returnTo") ? { returnTo: values.get("returnTo") } : {}), ...(values.get("loopTarget") ? { loop: { target: values.get("loopTarget"), maxCycles: Number(values.get("maxCycles")), onLimit: values.get("onLimit") } } : {}) };
+    const result = flowSchema.safeParse({ ...flow, rules: [...(flow.rules || []).filter(item => item.after !== rule.after), rule] });
+    if (!result.success) { const error = form.querySelector(".form-error"); error.textContent = result.error.issues[0].message; error.hidden = false; return; }
+    flow.rules = result.data.rules; persist(); await flush(); render(); toast("Flow rules saved for new tasks.");
+  }
+
+  function changeFlowOrder(workflow, rules = currentFlow().rules || []) {
+    const result = flowSchema.safeParse({ ...currentFlow(), workflow, rules });
+    if (!result.success) { toast(`${result.error.issues[0].message} Update the affected rules first.`); return false; }
+    currentFlow().workflow = workflow; currentFlow().rules = rules; return true;
   }
 
   function editAgent(id, form = null) {
@@ -535,18 +573,18 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     ui.step = Math.min(Math.max(ui.step, 0), run.steps.length - 1);
     const step = run.steps[ui.step];
     const isCurrent = run.id === state.run?.id;
-    const controls = isCurrent ? (run.status === "running" ? button("pause", run.pauseRequested ? "Pause requested" : "Pause", "pause", "", "", run.pauseRequested) : run.status === "paused" && run.controlMode === "studio" ? button("resume", "Resume", "play", "primary") : "") + (["queued", "running", "paused", "waiting_approval", "needs_reconciliation", "cancelling"].includes(run.status) ? button("cancel", "Cancel", "stop", "danger") : button("run", "Run again", "play", "primary")) : button("live-session", "Latest run", "arrow");
+    const controls = isCurrent ? (run.status === "running" ? button("pause", run.pauseRequested ? "Pause requested" : "Pause", "pause", "", "", run.pauseRequested) : run.status === "paused" && run.controlMode === "studio" ? button("resume", "Resume", "play", "primary") : "") + (["queued", "running", "paused", "waiting_approval", "waiting_review", "needs_reconciliation", "cancelling"].includes(run.status) ? button("cancel", "Cancel", "stop", "danger") : button("run", "Run again", "play", "primary")) : button("live-session", "Latest run", "arrow");
     const activeStep = run.steps[Math.min(run.index, run.steps.length - 1)];
     const completed = run.steps.filter(item => item.status === "succeeded").length;
-    const nextAction = run.status === "waiting_approval" ? `${escape(activeStep.agent.name)} is waiting for you` : run.status === "running" ? `${escape(activeStep.agent.name)} is working` : run.status === "succeeded" ? "Your team has finished. Review the outputs." : run.status === "paused" ? "Task paused. Resume when you are ready." : run.status === "failed" ? "This task needs attention" : run.status === "needs_reconciliation" ? "Review the interrupted session" : "Task cancelled. Your outputs are still here.";
-    const detail = run.status === "waiting_approval" ? escape(run.approval?.description || "Review the pending permission request.") : run.status === "running" && !run.pauseRequested ? `Step ${Math.min(run.index + 1, run.steps.length)} of ${run.steps.length} / ${roleOutputs[activeStep.agent.role]}` : run.status === "succeeded" ? `${run.artifacts.length} outputs, with the conversations that produced them.` : escape(run.note);
-    const approvalActions = isCurrent && run.status === "needs_reconciliation" ? button("reconcile", "Check provider state", "activity", "primary") + controls : isCurrent && run.status === "waiting_approval" ? button("approve", "Approve request", "check", "primary") + button("cancel", "Reject & cancel", "close", "text") : controls;
+    const nextAction = run.status === "waiting_review" ? (run.review.kind === "loop_limit" ? "Automatic revision limit reached" : run.review.kind === "scope_change" ? "A plan change needs your review" : "Your review is needed") : run.status === "waiting_approval" ? `${escape(activeStep.agent.name)} is waiting for you` : run.status === "running" ? `${escape(activeStep.agent.name)} is working` : run.status === "succeeded" ? "Your team has finished. Review the outputs." : run.status === "paused" ? "Task paused. Resume when you are ready." : run.status === "failed" ? "This task needs attention" : run.status === "needs_reconciliation" ? "Review the interrupted session" : "Task cancelled. Your outputs are still here.";
+    const detail = run.status === "waiting_review" ? "Review the outputs below. The next agent has not started." : run.status === "waiting_approval" ? escape(run.approval?.description || "Review the pending permission request.") : run.status === "running" && !run.pauseRequested ? `Step ${Math.min(run.index + 1, run.steps.length)} of ${run.steps.length} / ${roleOutputs[activeStep.agent.role]}` : run.status === "succeeded" ? `${run.artifacts.length} outputs, with the conversations that produced them.` : escape(run.note);
+    const approvalActions = isCurrent && run.status === "waiting_review" ? button("review-open", "Review outputs", "file", "primary") + controls : isCurrent && run.status === "needs_reconciliation" ? button("reconcile", "Check provider state", "activity", "primary") + controls : isCurrent && run.status === "waiting_approval" ? button("approve", "Approve request", "check", "primary") + button("cancel", "Reject & cancel", "close", "text") : controls;
     const followControl = isCurrent && engine.isActive() ? (ui.followRun ? '<span class="badge">Following live</span>' : button("follow-run", "Follow live", "activity", "small")) : `<span class="badge gray">Session ${ui.step + 1}</span>`;
     const mood = item => item.status === "running" ? "running" : item.status === "waiting_approval" ? "waiting" : "";
     const actionMark = ["running", "waiting_approval", "paused"].includes(run.status) ? agentIcon(activeStep.agent, true, mood(activeStep)) : icon(run.status === "succeeded" ? "check" : run.status === "failed" ? "alert" : "activity");
-    return `<section class="next-action ${run.status === "waiting_approval" ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${nextAction}</h2><p>${detail}</p>${run.approval ? `<pre class="approval-details">${escape(run.approval.details)}</pre>` : ""}</div><div class="actions">${approvalActions}</div></section>
-      <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Conversations and outputs are saved together</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => `<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
-      <section class="panel run-grid"><aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => `<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${statusNames[item.status]}</small></span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div>${followControl}</div><nav class="session-tabs" aria-label="Session content">${[["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["terminal", "Terminal"]].map(([id, label]) => `<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${label}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div><div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? "artifact" : "artifacts"}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${evidenceView(run)}</section>`;
+    return `<section class="next-action ${["waiting_approval", "waiting_review"].includes(run.status) ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${nextAction}</h2><p>${detail}</p>${run.approval ? `<pre class="approval-details">${escape(run.approval.details)}</pre>` : ""}</div><div class="actions">${approvalActions}</div></section>
+      <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Flow v${run.flow.revision || 1}${run.lockedPlan ? ` / Approved plan v${run.lockedPlan.version}` : ""}${Object.entries(run.loopCounts || {}).map(([id, count]) => ` / ${escape(run.steps.find(s => s.agent.id === id)?.agent.name)} revisions ${count}/${run.flow.rules?.find(r => r.after === id)?.loop?.maxCycles}`).join("")}</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => `<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
+      <section class="panel run-grid"><aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => `<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${statusNames[item.status]}${item.attempt > 1 ? ` / Attempt ${item.attempt}` : ""}</small></span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div>${followControl}</div><nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ["terminal", "Terminal"]].map(([id, label]) => `<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${label}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, run) : ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div><div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? "artifact" : "artifacts"}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${evidenceView(run)}</section>`;
   }
 
   function usageLabel(step) {
@@ -556,6 +594,29 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     const cached = usage.cachedInputTokens ?? usage.cache_read_input_tokens;
     const output = usage.outputTokens ?? usage.output_tokens;
     return [["Input", input], ["Cached", cached], ["Output", output]].filter(([, value]) => Number.isFinite(value)).map(([label, value]) => `${label}: ${value.toLocaleString()}`).join(" / ") || "Token usage not reported.";
+  }
+
+  function reviewView(run) {
+    const review = run.review || run.reviewHistory?.at(-1);
+    if (!review) return '<p>No human review is pending.</p>';
+    const step = [...run.steps, ...(run.stepHistory || [])].find(s => s.id === review.stepId);
+    const previous = (run.stepHistory || []).filter(s => s.agent.id === step?.agent.id).at(-1);
+    const pending = run.id === state.run?.id && run.status === "waiting_review" && !!run.review;
+    const canApprove = pending && !["scope_change", "loop_limit"].includes(review.kind);
+    const outputs = review.artifactIds.map(id => run.artifacts.find(a => a.id === id)).filter(Boolean);
+    const target = run.steps.find(s => s.agent.id === review.returnTo);
+    return `<div class="review-workspace"><div class="review-heading"><h3>${review.kind === "scope_change" ? "Review the requested scope change" : review.kind === "loop_limit" ? "Choose the next revision" : "Review this handoff"}</h3><span class="badge ${pending ? "amber" : "gray"}">${pending ? `Draft ${step?.attempt || 1}` : review.action === "approved" ? "Approved" : "Revision requested"}</span></div><p>${escape(review.summary)}</p>
+      ${outputs.map(artifact => {
+        const before = previous && run.artifacts.find(a => a.stepId === previous.id && a.name === artifact.name);
+        return `<article class="review-document"><h3>${icon("file")}${escape(artifact.name)}</h3><pre>${escape(artifact.content)}</pre>${before && before.id !== artifact.id ? `<details class="review-compare"><summary>Compare with previous draft</summary><div class="review-diff"><section><h4>Previous draft</h4><pre>${escape(before.content)}</pre></section><section><h4>Current draft</h4><pre>${escape(artifact.content)}</pre></section></div></details>` : ""}</article>`;
+      }).join("") || '<p class="meta">This step returned no text artifacts. Inspect Conversation and Tool activity before deciding.</p>'}
+      ${pending ? `<form data-form="review-feedback" data-id="${review.id}" class="review-feedback"><label for="review-feedback">What should ${escape(target?.agent.name || "the agent")} change?</label><textarea id="review-feedback" name="feedback" maxlength="8000" rows="3" placeholder="Describe the changes or the next approach to try..." required>${escape(ui.reviewDraft)}</textarea><p class="meta">A revision returns to ${escape(target?.agent.name)} and reruns later checks. Previous sessions remain in Attempts.</p><button type="submit" class="btn">${icon("reset")}Request revision</button></form><div class="review-actions">${canApprove ? button("review-lock", review.lockOutputs ? "Lock only" : "Approve only", "lock") + button("review-approve", review.lockOutputs ? "Lock and continue" : "Approve and continue", "check", "primary") : '<p class="meta">Send a revision request to continue, or cancel this task. No further automatic retries will run without your action.</p>'}</div><p class="meta">${review.lockOutputs ? "Approval locks these exact output versions. " : ""}Human review does not grant tool permissions.</p>` : `<p class="meta">${review.action === "approved" ? `Approved ${new Date(review.resolvedAt).toLocaleString()}.` : escape(review.feedback || "")}</p>`}
+      ${run.reviewHistory?.length ? `<details class="review-history"><summary>Review history (${run.reviewHistory.length})</summary>${run.reviewHistory.map(item => `<div><strong>${item.action === "approved" ? "Approved" : "Revision requested"}</strong><p>${escape(item.feedback || item.summary)}</p><small>${new Date(item.resolvedAt).toLocaleString()}</small></div>`).join("")}</details>` : ""}</div>`;
+  }
+
+  function attemptsView(step, run) {
+    const attempts = [...(run.stepHistory || []).filter(item => item.agent.id === step.agent.id), step];
+    return `<div class="attempts-list"><p class="meta">Each revision uses a fresh session. Earlier conversations and outputs remain available.</p>${attempts.map(item => `<details ${item.id === step.id ? "open" : ""}><summary>Attempt ${item.attempt || 1} / ${statusNames[item.status]}</summary>${item.feedback ? `<p class="handoff-card">${escape(item.feedback)}</p>` : ""}${item.messages.map(message => `<div class="message ${message.type}"><div class="message-label">${escape(message.type)}</div><div class="message-text">${escape(message.text)}</div></div>`).join("")}${item.finalText ? `<details><summary>Structured result</summary><pre class="artifact-preview">${escape(item.finalText)}</pre></details>` : ""}<div class="artifact-list">${run.artifacts.filter(a => a.stepId === item.id).map(artifactRow).join("")}</div></details>`).join("")}</div>`;
   }
 
   function terminalView(step, run) {
@@ -580,7 +641,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
   }
 
   function artifactRow(artifact) {
-    return `<button class="artifact-row" data-action="artifact" data-id="${escape(artifact.id)}" data-tint="${tintOf(artifact.type)}">${icon(artifact.type === "Code diff" ? "code" : "file")}<span><strong>${escape(artifact.name)}</strong><small>${escape(artifact.agent)} / ${artifact.stale ? "Earlier code version" : artifact.verified ? "Recorded evidence" : "Agent report"}</small></span><span class="badge gray">${escape(artifact.type)}</span>${icon("chevron")}</button>`;
+    return `<button class="artifact-row" data-action="artifact" data-id="${escape(artifact.id)}" data-tint="${tintOf(artifact.type)}">${icon(artifact.type === "Code diff" ? "code" : "file")}<span><strong>${escape(artifact.name)}</strong><small>${escape(artifact.agent)} / ${artifact.superseded ? "Previous attempt" : artifact.stale ? "Earlier code version" : currentRun()?.reviewHistory?.some(review => review.action === "approved" && review.lockOutputs && review.artifactIds.includes(artifact.id)) ? "Locked output" : artifact.verified ? "Recorded evidence" : "Agent report"}</small></span><span class="badge gray">${escape(artifact.type)}</span>${icon("chevron")}</button>`;
   }
 
   function evidenceView(run) {
@@ -657,7 +718,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     }
     let flow;
     if (mode === "rename") { source.name = name; flow = source; }
-    else { flow = { id: crypto.randomUUID(), name, workflow: mode === "duplicate" ? [...source.workflow] : [], archived: false }; state.flows.push(flow); }
+    else { flow = { id: crypto.randomUUID(), name, workflow: mode === "duplicate" ? [...source.workflow] : [], rules: mode === "duplicate" ? structuredClone(source.rules || []) : [], revision: 1, archived: false }; state.flows.push(flow); }
     selectFlow(flow.id);
   }
 
@@ -760,7 +821,6 @@ import { enhanceSelects, closeSelects } from "./selects.js";
   }
 
   function libraryModal() {
-    if (engine.isActive()) return toast("Finish or cancel the current run before changing its workflow.");
     const available = state.agents.filter(agent => !currentFlow().workflow.includes(agent.id));
     showModal("Add a step", `<p>Choose a preset. New steps are added to the end of your sequential workflow.</p><div class="library-list">${available.map(agent => `<button class="library-item" data-action="add-existing" data-id="${escape(agent.id)}">${agentIcon(agent)}<span><strong>${escape(agent.name)}</strong><small>${providerName(agent.provider)} / ${escape(agent.model)}</small></span>${icon("plus")}</button>`).join("")}${!available.length ? '<p class="meta" style="padding:15px 0">All your current presets are already in this workflow.</p>' : ""}</div>`, button("new-agent", "Create a new agent", "plus", "primary"));
   }
@@ -934,6 +994,27 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     }
     else if (action === "cancel") engine.cancel();
     else if (action === "live-session") { ui.view = "run"; ui.historyId = null; ui.artifactId = null; ui.followRun = true; ui.step = Math.min(state.run?.index || 0, (state.run?.steps.length || 1) - 1); render(); }
+    else if (action === "review-approve" || action === "review-lock") await engine.review(action === "review-lock" ? "approve-review-only" : "approve-review");
+    else if (action === "review-open") { ui.sessionTab = "review"; ui.step = currentRun().steps.findIndex(s => s.id === currentRun().review.stepId); render(); }
+    else if (action === "flow-recommended") {
+      const flow = currentFlow(), crew = flow.workflow.map(id => state.agents.find(a => a.id === id));
+      const planner = crew.find(a => a.role === "planner"), coder = crew.find(a => a.role === "coder"), reviewer = crew.find(a => a.role === "reviewer"), final = crew.at(-1);
+      const rules = [];
+      if (planner) rules.push({ after: planner.id, review: "always", lockOutputs: true, returnTo: planner.id });
+      if (coder && reviewer && flow.workflow.indexOf(coder.id) < flow.workflow.indexOf(reviewer.id)) rules.push({ after: reviewer.id, review: "auto", lockOutputs: false, loop: { target: coder.id, maxCycles: 3, onLimit: "review" } });
+      if (final) {
+        const finalRule = rules.find(rule => rule.after === final.id);
+        if (finalRule) finalRule.review = "always";
+        else rules.push({ after: final.id, review: "always", lockOutputs: false, returnTo: final.id });
+      }
+      showModal("Use suggested flow rules?", "<p>Review and lock the plan, allow up to three Coder / Reviewer revisions, and review the final output. These replace this flow's current rules. Active tasks keep their saved rules.</p>", button("close-modal", "Keep current rules", "") + button("flow-apply-suggested", "Apply rules", "check", "primary"));
+      ui.suggestedRules = { flowId: flow.id, rules };
+    }
+    else if (action === "flow-apply-suggested") {
+      if (currentFlow().id !== ui.suggestedRules?.flowId) return;
+      const flow = flowSchema.parse({ ...currentFlow(), rules: ui.suggestedRules.rules });
+      currentFlow().rules = flow.rules; persist(); await flush(); closeModal(); render();
+    }
     else if (action === "run-step") { ui.step = Number(target.dataset.index); ui.followRun = false; render(); }
     else if (action === "session-tab") { ui.sessionTab = target.dataset.tab; render(); }
     else if (action === "choose-skills") skillPicker(target.closest("form"));
@@ -988,26 +1069,25 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       sizeCanvas();
     }
     else if (["move-up", "move-down"].includes(action)) {
-      if (engine.isActive()) return;
       const index = currentFlow().workflow.indexOf(ui.selected);
       const destination = index + (action === "move-up" ? -1 : 1);
       if (destination < 0 || destination >= currentFlow().workflow.length) return;
-      [currentFlow().workflow[index], currentFlow().workflow[destination]] = [currentFlow().workflow[destination], currentFlow().workflow[index]];
+      const order = [...currentFlow().workflow];
+      [order[index], order[destination]] = [order[destination], order[index]];
+      if (!changeFlowOrder(order)) return;
       persist(); render(); toast("Step order saved. Handoffs now follow the new sequence.");
     }
     else if (action === "remove-step") {
-      if (engine.isActive()) return;
-      currentFlow().workflow = currentFlow().workflow.filter(item => item !== ui.selected);
+      if (!changeFlowOrder(currentFlow().workflow.filter(item => item !== ui.selected), (currentFlow().rules || []).filter(rule => rule.after !== ui.selected))) return;
       ui.selected = null;
       ui.linkFrom = null; persist(); render(); toast("Step removed. Its preset is still in your agent library.");
     }
-    else if (action === "connect-from") { if (engine.isActive()) return; ui.linkFrom = id; render(); toast("Choose a later input port to preview the new order."); }
+    else if (action === "connect-from") { ui.linkFrom = id; render(); toast("Choose a later input port to preview the new order."); }
     else if (action === "connect-to") {
-      if (engine.isActive()) return;
       if (!ui.linkFrom) return toast("Select an output port first.");
       const from = currentFlow().workflow.indexOf(ui.linkFrom);
       const to = currentFlow().workflow.indexOf(id);
-      if (to <= from) { toast("Backward links would create a cycle. Choose a later step."); return; }
+      if (to <= from) { toast("Use Automatic revisions in step settings to create a bounded loop."); return; }
       if (to === from + 1) { ui.linkFrom = null; render(); return toast("These agents are already connected in this order."); }
       ui.pendingOrder = [...currentFlow().workflow];
       ui.pendingOrder.splice(to, 1); ui.pendingOrder.splice(from + 1, 0, id);
@@ -1016,15 +1096,14 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       showModal("Review the new order", `<p>This places <strong>${escape(state.agents.find(agent => agent.id === id).name)}</strong> directly after <strong>${escape(state.agents.find(agent => agent.id === currentFlow().workflow[from]).name)}</strong>. Other agents keep their relative order.</p><ol class="order-preview">${ui.pendingOrder.map((agentId, index) => { const agent = state.agents.find(item => item.id === agentId); return `<li class="${currentFlow().workflow[index] !== agentId ? "changed" : ""}"><span>${index + 1}</span>${agentIcon(agent)}<strong>${escape(agent.name)}</strong>${currentFlow().workflow[index] !== agentId ? '<small>Moved</small>' : ""}</li>`; }).join("")}</ol>`, button("close-modal", "Keep current order", "") + button("apply-order", "Apply new order", "check", "primary"));
     }
     else if (action === "apply-order") {
-      if (engine.isActive() || !ui.pendingOrder) return;
-      currentFlow().workflow = ui.pendingOrder; ui.pendingOrder = null;
+      if (!ui.pendingOrder || !changeFlowOrder(ui.pendingOrder)) return;
+      ui.pendingOrder = null;
       persist(); closeModal(); render(); toast("New order saved.");
     }
     else if (action === "library") libraryModal();
     else if (action === "new-agent") newAgentModal();
     else if (action === "edit-agent") editAgent(id);
     else if (action === "add-existing") {
-      if (engine.isActive()) return toast("Finish or cancel the active run before editing the workflow.");
       if (currentFlow().workflow.length >= 12) return toast("A sequential flow supports up to 12 steps.");
       if (!currentFlow().workflow.includes(id)) currentFlow().workflow.push(id);
       ui.selected = id; ui.zoom = null; ui.view = "team";
@@ -1094,14 +1173,14 @@ import { enhanceSelects, closeSelects } from "./selects.js";
         catch (error) { toast(error.message); return; }
       }
       ui.historyId = state.run?.id === id ? null : id;
-      ui.view = "run"; ui.step = 0; ui.followRun = false; ui.artifactId = null; render();
+      ui.view = "run"; ui.step = 0; ui.followRun = false; ui.artifactId = null; ui.sessionTab = currentRun()?.review ? "review" : "conversation"; if (currentRun()?.review) ui.step = currentRun().steps.findIndex(s => s.id === currentRun().review.stepId); render();
     }
     else if (action === "artifact") {
       const artifact = findArtifact(id);
       if (artifact) { ui.artifactId = id; render(); }
     }
     else if (action === "download-artifact") { const artifact = findArtifact(id); if (artifact?.mime) { const link = document.createElement("a"); link.href = `/api/artifacts/${currentRun().id}/${artifact.id}`; link.download = artifact.name; link.click(); } else if (artifact) download(artifact.name, artifact.content); }
-    else if (action === "export") download("agent-studio-workflow.json", JSON.stringify({ version: 1, name: currentFlow().name, workflow: currentFlow().workflow, agents: state.agents.filter(agent => currentFlow().workflow.includes(agent.id)).map(({ skills, ...agent }) => agent), brief: state.brief, approvalRequired: state.approvalRequired }, null, 2), "application/json");
+    else if (action === "export") download("agent-studio-workflow.json", JSON.stringify({ version: 1, name: currentFlow().name, workflow: currentFlow().workflow, rules: currentFlow().rules || [], revision: currentFlow().revision || 1, agents: state.agents.filter(agent => currentFlow().workflow.includes(agent.id)).map(({ skills, ...agent }) => agent), brief: state.brief, approvalRequired: state.approvalRequired }, null, 2), "application/json");
     else if (action === "reset") {
       if (ui.navigationOpen) closeNavigation();
       else { closeNavigationActions(); app.querySelector('[data-action="navigation-actions"]').focus(); }
@@ -1130,12 +1209,27 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     }
   });
 
+  document.addEventListener("input", event => {
+    if (event.target.id === "review-feedback") ui.reviewDraft = event.target.value;
+  });
+  document.addEventListener("change", event => {
+    const form = event.target.closest('[data-form="flow-rule"]');
+    if (!form) return;
+    form.elements.lockOutputs.disabled = form.elements.review.value !== "always";
+    if (form.elements.lockOutputs.disabled) form.elements.lockOutputs.checked = false;
+    form.elements.maxCycles.disabled = !form.elements.loopTarget.value;
+    form.elements.onLimit.disabled = !form.elements.loopTarget.value;
+    enhanceSelects(form);
+  });
+
   document.addEventListener("submit", async event => {
     const form = event.target;
     if (!form.matches("[data-form]")) return;
     event.preventDefault();
     const values = new FormData(form);
-    if (form.dataset.form === "flow") saveFlow(form);
+    if (form.dataset.form === "flow-rule") await saveFlowRule(form);
+    else if (form.dataset.form === "review-feedback") await engine.review("request-revision", values.get("feedback"));
+    else if (form.dataset.form === "flow") saveFlow(form);
     else if (form.dataset.form === "project") await saveProject(form);
     else if (form.dataset.form === "folder-path") await browseFolders(values.get("path").trim());
     else if (form.dataset.form === "project-settings") await saveProjectSettings(form);
@@ -1161,7 +1255,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       const template = initialState().agents.find(agent => agent.role === role);
       const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       state.agents.push({ ...template, id, name, prompt: prompts[role] });
-      const added = ui.view === "team" && !engine.isActive() && currentFlow().workflow.length < 12;
+      const added = ui.view === "team" && currentFlow().workflow.length < 12;
       if (added) currentFlow().workflow.push(id);
       ui.selected = null; ui.view = "agents"; ui.zoom = null;
       persist(); closeModal(); render(); editAgent(id);

@@ -928,3 +928,33 @@ dialog::backdrop { background: #2b223852; backdrop-filter: blur(4px); }
   .tilt { transform: none; }
   .stamp, .confetti { display: none; }
 }
+
+.flow-rule-chip, .flow-loop-chip { position: absolute; width: 208px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px dashed var(--line-2); border-radius: 12px; background: var(--paper); padding: 5px 8px; font-size: 11px; color: var(--ink-2); }
+.flow-rule-chip.has-review { background: var(--butter); border-style: solid; border-color: var(--ink); }
+.flow-loop-chip { background: var(--lavender); border: 0; }
+.flow-rule-chip .icon, .flow-loop-chip .icon { width: 14px; height: 14px; flex-shrink: 0; }
+.flow-rule-form { padding-bottom: 22px; margin-bottom: 20px; border-bottom: 1.5px dashed var(--line-2); }
+.flow-rule-form h3 { font-size: 16px; margin: 12px 0; }
+.flow-rule-form .field { margin-top: 15px; }
+.flow-lock { display: flex; gap: 9px; align-items: center; margin: 15px 0; font-size: 13px; }
+.flow-lock input { width: 17px; height: 17px; }
+.flow-rule-form .meta { line-height: 1.6; }
+.flow-rule-form > .btn { margin-top: 15px; }
+.review-workspace { display: grid; gap: 18px; }
+.review-heading, .review-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.review-document { border: 1.5px solid var(--line-2); border-radius: 18px; padding: 18px; background: var(--paper); }
+.review-document h3 { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; margin-bottom: 15px; font-size: 15px; }
+.review-document pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.8; font-family: inherit; }
+.review-feedback { display: grid; gap: 10px; }
+.review-feedback label { font-weight: 700; font-size: 14px; }
+.review-feedback .btn { justify-self: start; }
+.review-actions { justify-content: flex-end; padding-top: 16px; border-top: 1.5px dashed var(--line-2); }
+.review-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 15px; }
+.review-diff section { min-width: 0; }
+.review-diff h4 { margin-bottom: 10px; color: var(--muted); }
+.review-compare, .review-history, .attempts-list > details { padding-top: 16px; margin-top: 14px; border-top: 1px dashed var(--line-2); }
+.review-history > div { margin: 15px 0; }
+.attempts-list summary, .review-workspace summary { cursor: pointer; font-weight: 600; }
+.attempts-list .message { margin-top: 16px; }
+.run-progress .waiting_review { background: var(--butter); }
+@media (max-width: 700px) { .review-diff { grid-template-columns: 1fr; } .review-actions .btn { width: 100%; } }

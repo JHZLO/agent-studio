@@ -71,8 +71,11 @@ export async function importLocal(selection) {
 
 export class StudioEngine {
   constructor(onChange, run = null) { this.onChange = onChange; this.run = run; this.closed = false; this.seq = initial.state.eventSeq; this.connect(); }
-  isActive() { return this.run && ["queued", "running", "paused", "waiting_approval", "cancelling", "needs_reconciliation"].includes(this.run.status); }
-  update(run) { this.run = run; this.onChange(structuredClone(run)); }
+  isActive() { return this.run && ["queued", "running", "paused", "waiting_approval", "waiting_review", "cancelling", "needs_reconciliation"].includes(this.run.status); }
+  update(run) {
+    if (run && this.run?.id === run.id && run.eventSeq < this.run.eventSeq) return;
+    this.run = run; this.onChange(structuredClone(run));
+  }
   connect() {
     if (this.closed) return;
     this.events?.close();
@@ -97,6 +100,12 @@ export class StudioEngine {
   }
   async control(action) {
     try { const run = await request("/api/runs/control", { id: this.run.id, action, approvalId: this.run.approval?.id }); this.update(run); }
+    catch (error) { window.dispatchEvent(new CustomEvent("studio-error", { detail: error.message })); }
+  }
+  async review(action, feedback = "") {
+    const review = this.run.review;
+    if (!review) return;
+    try { this.update(await request("/api/runs/control", { id: this.run.id, action, reviewId: review.id, fingerprint: review.fingerprint, feedback })); }
     catch (error) { window.dispatchEvent(new CustomEvent("studio-error", { detail: error.message })); }
   }
   pause() { return this.control("pause"); }
