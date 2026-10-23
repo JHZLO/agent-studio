@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { Store, hash } from "../packages/engine/store.ts";
+import { SkillCatalog } from "../packages/engine/skills.ts";
 import { inspectProject, prepareProject } from "../packages/engine/projects.ts";
 import { settingsSchema, type Run } from "../packages/contracts/index.ts";
 import { initialState } from "../packages/contracts/defaults.js";
@@ -33,6 +34,33 @@ test("Settings reject invalid flow references and archiving every flow", () => {
   settings.flows[0].workflow.push("missing"); assert.equal(settingsSchema.safeParse(settings).success, false);
   const archived = settingsSchema.parse(initialState()); archived.flows[0].archived = true;
   assert.equal(settingsSchema.safeParse(archived).success, false);
+});
+test("Skill identity follows its real path and supporting content changes its version", async t => {
+  const path = await directory(t), root = join(path, "skills");
+  await mkdir(join(root, "first", "references"), { recursive: true });
+  await writeFile(join(root, "first", "SKILL.md"), "---\nname: Shared\ndescription: >\n  A useful\n  skill.\n---\n# Instructions");
+  await writeFile(join(root, "first", "references", "guide.md"), "one");
+  await symlink(join(root, "first"), join(root, "alias"));
+  const catalog = new SkillCatalog(join(path, "snapshots")); const found = await catalog.scan([root]);
+  assert.equal(found.skills.length, 1); assert.equal(found.skills[0].description, "A useful skill.");
+  const binding = found.skills[0]; await catalog.snapshot([binding]);
+  await writeFile(join(root, "first", "references", "guide.md"), "two");
+  await assert.rejects(catalog.snapshot([binding]), /changed/);
+  const frozen = await catalog.readSnapshot(binding.version);
+  assert.equal(frozen.files.find(f => f.path.endsWith("guide.md"))?.content, "one");
+  assert.notEqual((await catalog.detail(binding.id)).version, binding.version);
+});
+test("Skill snapshots exclude secrets and symlinks outside their source", async t => {
+  const path = await directory(t), root = join(path, "skills");
+  await mkdir(join(root, "safe", "references"), { recursive: true });
+  await writeFile(join(root, "safe", "SKILL.md"), "# Safe");
+  await writeFile(join(path, "outside.md"), "outside");
+  await symlink(join(path, "outside.md"), join(root, "safe", "references", "escape.md"));
+  await writeFile(join(root, "safe", "references", "credentials.json"), "secret");
+  const catalog = new SkillCatalog(join(path, "snapshots")); const found = await catalog.scan([root]);
+  const detail = await catalog.detail(found.skills[0].id);
+  assert.deepEqual(detail.files.map(f => f.path), ["SKILL.md"]); assert.equal(detail.omitted, 1);
+  await assert.rejects(catalog.readSnapshot("../outside.md"));
 });
 test("Local projects allow non-Git folders and worktrees require a commit", async t => {
   const path = await directory(t);
