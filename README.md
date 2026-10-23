@@ -19,12 +19,26 @@ node scripts/bootstrap.mjs
 Open **http://127.0.0.1:4183/**. Setup installs the pinned Node and pnpm toolchain inside `.local/tools`, prepares native SQLite and terminal modules, builds k6 with a patched Go compiler, and installs Playwright Chromium. The first setup needs network access. It does not replace global Node, Codex, or Claude Code installations.
 
 1. In **Connections**, check your existing Codex or Claude Code subscription login, or enter a provider API key. The **Sign in** action opens the official CLI sign-in flow.
-2. In **Agent library** or **Flows**, select a connected provider and model for every step. The initial flow includes both Codex and Claude presets; change them if you want to use one provider.
+2. In **Agent library**, open **Edit agent** to select a connection, model, and permission level. Flows reuse these saved agents. The initial flow includes both Codex and Claude presets; change them if you want to use one provider.
 3. Add a project folder. Choose **Local** to use it directly, or **New worktree** to create a Git branch and working directory when the task starts.
 4. Attach local skills if needed. Each run freezes its selected skill versions and supporting text files.
-5. Describe a task and run the flow. Inspect the plan and QA sheet before approving file changes. Shell commands and external HTTP targets have separate approvals.
+5. Describe a task and run the flow. The default permission level requests file-write approval according to workspace settings, then asks separately for shell commands and external HTTP targets.
 
 API keys are kept in runner memory. Enter them again after a runner restart. Subscription credentials remain in the official CLI's credential store. Disconnecting a connection in Studio does not log the CLI out. Billing modes never switch automatically.
+
+## Agent execution settings
+
+Open **Agent library > Edit agent**. Changes apply to future runs. Active runs keep their saved settings, available under **Handoff**.
+
+| Permission level | Behavior |
+| --- | --- |
+| Ask for approval | Uses the workspace file-write approval setting. Each shell command and external HTTP target requests approval. |
+| Read only | Allows selected file-reading and artifact tools. Blocks writes, shell commands, HTTP calls, and browser actions. |
+| Project automation | Pre-approves selected file-write tools and sandboxed shell commands, including command network access. External HTTP tool targets still request approval. |
+
+Tool checkboxes continue to limit each agent. Read only temporarily disables action tools without losing their selections. Project automation retains project file boundaries and the Codex shell sandbox; it does not grant approval to other agents in the flow.
+
+Codex agents also have **Fast mode**: **Default** follows local Codex settings, **On** requests faster processing, and **Off** explicitly selects standard speed. Studio checks runtime model support before inference and records the selected session tier. Unsupported requests fail with an explanation. Fast mode consumes more subscription usage or incurs higher API pricing; see [OpenAI's speed guide](https://learn.chatgpt.com/docs/agent-configuration/speed). Claude agents do not show this Codex setting.
 
 ## What works
 

@@ -34,7 +34,8 @@ The 2026-10-23 binary scan of the patched k6 build found zero affected symbols a
 - Child environments exclude inherited provider keys and tokens. Codex API authentication uses ephemeral storage; it does not replace the subscription login.
 - Preset permissions restrict Studio tools. Native provider execution, hooks, external MCP tools, and automatic subagents are disabled for Studio turns.
 - Project file tools reject secret paths, escaping paths, and outside symlinks. Selected skill files are read from frozen snapshots.
-- Shell execution needs explicit approval for each command and uses the Codex OS sandbox. Shell approval still matters: a permitted command can access resources allowed by that sandbox, including networking. Studio is not a container or a defense against a malicious local user.
+- Read-only agents cannot use action tools, even when the run already has file-write approval. The default approval level asks for each shell command. Project automation pre-approves selected project writes and shell commands for that agent, without approving writes for other agents.
+- Shell execution uses the Codex OS sandbox in every permission level that allows shell tools. A permitted command can access resources allowed by that sandbox, including networking. Studio is not a container or a defense against a malicious local user.
 - Browser QA uses an isolated context with loopback-only requests. HTTP external targets need approval. QA tools cannot address the configured Studio control port.
 - k6 is limited to loopback, at most 5 virtual users and 10 seconds, with redirects disabled. Agent turns and commands have time limits. Completed tasks stop their test servers and browsers.
 
