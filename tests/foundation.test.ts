@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { Store, hash } from "../packages/engine/store.ts";
+import { inspectProject, prepareProject } from "../packages/engine/projects.ts";
 import { settingsSchema, type Run } from "../packages/contracts/index.ts";
 import { initialState } from "../packages/contracts/defaults.js";
 
@@ -32,6 +33,22 @@ test("Settings reject invalid flow references and archiving every flow", () => {
   settings.flows[0].workflow.push("missing"); assert.equal(settingsSchema.safeParse(settings).success, false);
   const archived = settingsSchema.parse(initialState()); archived.flows[0].archived = true;
   assert.equal(settingsSchema.safeParse(archived).success, false);
+});
+test("Local projects allow non-Git folders and worktrees require a commit", async t => {
+  const path = await directory(t);
+  assert.equal((await inspectProject(path, { mode: "local" })).isGit, false);
+  await assert.rejects(inspectProject(path, { mode: "worktree", baseRef: "HEAD" }), /at least one commit/);
+  execFileSync("git", ["init", "-q", path]);
+  assert.equal((await inspectProject(path)).head, null);
+});
+test("Worktrees preserve source changes and reject stale or existing branch names", async t => {
+  const path = await directory(t), source = join(path, "source"); await mkdir(source); initGit(source);
+  await writeFile(join(source, "uncommitted.txt"), "keep me");
+  await assert.rejects(inspectProject(source, { mode: "worktree", baseRef: "missing" }), /no longer available/);
+  await assert.rejects(inspectProject(source, { mode: "worktree", baseRef: "HEAD", branchName: "--bad" }), /valid new branch/);
+  const prepared = await prepareProject({ id: "p", name: "Test", path: source, execution: { mode: "worktree", baseRef: "HEAD", branchName: "test/run" } }, "run", path);
+  assert.notEqual(prepared.cwd, source); assert.equal(await readFile(join(source, "uncommitted.txt"), "utf8"), "keep me");
+  await assert.rejects(inspectProject(source, { mode: "worktree", baseRef: "HEAD", branchName: "test/run" }), /already exists/);
 });
 test("History lists remain small while complete conversations stay retrievable", async t => {
   const path = await directory(t), store = new Store(join(path, "state.sqlite")); t.after(() => store.close());
