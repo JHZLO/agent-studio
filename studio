@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+STUDIO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+STUDIO_PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
+case "$(uname -m)" in arm64|aarch64) STUDIO_ARCH=arm64 ;; x86_64) STUDIO_ARCH=x64 ;; *) exit 1 ;; esac
+STUDIO_NODE="$STUDIO_ROOT/.local/tools/node-v24.22.1-$STUDIO_PLATFORM-$STUDIO_ARCH/bin"
+if [ ! -x "$STUDIO_NODE/node" ]; then
+  echo 'Run node scripts/bootstrap.mjs first.' >&2
+  exit 1
+fi
+export PATH="$STUDIO_NODE:$PATH"
+cd "$STUDIO_ROOT"
+exec "$STUDIO_ROOT/.local/tools/pnpm" "$@"

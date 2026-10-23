@@ -1,0 +1,21 @@
+import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
+import { chmodSync, existsSync } from "node:fs";
+const require = createRequire(import.meta.url);
+const sqlite = dirname(require.resolve("better-sqlite3/package.json"));
+const prebuild = createRequire(resolve(sqlite, "package.json")).resolve("prebuild-install/bin.js");
+execFileSync(process.execPath, [prebuild], { cwd: sqlite, stdio: "inherit" });
+const claude = dirname(require.resolve("@anthropic-ai/claude-code/package.json"));
+execFileSync(process.execPath, [resolve(claude, "install.cjs")], { cwd: claude, stdio: "inherit" });
+const Database = require("better-sqlite3");
+const db = new Database(":memory:");
+console.log("SQLite:", db.prepare("select sqlite_version() as version").get().version);
+db.close();
+const ptyRoot = dirname(require.resolve("node-pty/package.json"));
+const helper = resolve(ptyRoot, `prebuilds/${process.platform}-${process.arch}/spawn-helper`);
+// The published macOS helper lacks its executable bit.
+if (existsSync(helper)) chmodSync(helper, 0o755);
+const pty = require("node-pty").spawn("/bin/echo", ["PTY ready"], { cols: 80, rows: 24, cwd: process.cwd(), env: process.env });
+pty.onData(data => process.stdout.write(data));
+pty.onExit(({ exitCode }) => { process.exitCode = exitCode; });

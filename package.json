@@ -1,0 +1,39 @@
+{
+  "name": "agent-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": "24.22.1"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "setup": "node scripts/install-native.mjs"
+  },
+  "dependencies": {
+    "@openai/codex": "0.163.0",
+    "@anthropic-ai/claude-code": "2.1.308",
+    "@fastify/static": "10.1.7",
+    "@langchain/core": "1.2.20",
+    "@langchain/langgraph": "1.5.2",
+    "@langchain/langgraph-checkpoint": "1.2.1",
+    "@langchain/langgraph-checkpoint-sqlite": "1.1.0",
+    "@xterm/xterm": "6.0.0",
+    "@xterm/addon-fit": "0.11.0",
+    "better-sqlite3": "12.11.1",
+    "fastify": "5.12.7",
+    "node-pty": "1.1.0",
+    "tsx": "4.23.15",
+    "zod": "4.6.7",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.2",
+    "@types/better-sqlite3": "9.6.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}
