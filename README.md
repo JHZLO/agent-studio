@@ -41,6 +41,18 @@ Tool checkboxes continue to limit which tools each agent can call. Read only tem
 
 Codex agents also have **Fast mode**: **Default** follows local Codex settings, **On** requests faster processing, and **Off** explicitly selects standard speed. Studio checks runtime model support before inference and records the selected session tier. Unsupported requests fail with an explanation. Fast mode consumes more subscription usage or incurs higher API pricing; see [OpenAI's speed guide](https://learn.chatgpt.com/docs/agent-configuration/speed). Claude agents do not show this Codex setting.
 
+## Human reviews and revision loops
+
+Open **Flows** and select a step. **After this step** controls when a person reviews its outputs: continue automatically, review every completion, or review when issues remain. Enable **Lock reviewed outputs** to approve the exact output versions. These rules belong to the flow, while prompts, models, skills, and tool permissions stay in **Agent library**. Active tasks keep the flow rules saved at their start.
+
+**Suggested rules** adds a locked Planner review, a Coder / Reviewer loop with up to three automatic revisions, and a final human review. Review the proposed settings before applying them. Existing flows remain automatic until you save rules.
+
+When a task needs review, open **Review outputs**. Read the plan and QA sheet, request changes with feedback, or choose **Lock only** to approve and remain paused. **Lock and continue** starts the next step. Later drafts can be compared with earlier drafts, and **Attempts** retains previous conversations and outputs. Human review does not grant file, shell, or network permissions.
+
+Under **Automatic revisions**, choose an earlier step and a limit from 1 to 10. A `revise` result reruns that interval in fresh sessions before the human checkpoint. The limit counts extra attempts after the first pass through the interval. At the limit, the task either requests human feedback or stops. Human feedback authorizes one more attempt without resetting the automatic limit. Loop ranges cannot overlap. Execution errors stop the task instead of consuming revision attempts.
+
+Changes to an approved plan require another human review. Approval checks the reviewed output versions and project fingerprint; changed files require a fresh revision. Pending human reviews survive a runner restart. Superseded outputs remain in history and are not passed forward as current evidence.
+
 ## What works
 
 - Project registration, folder browsing, branch validation, local execution, and real worktree creation.
@@ -63,7 +75,7 @@ Pause the task and wait for its current step to finish. Open **Terminal** on a s
 ./studio terminal RUN_ID
 ```
 
-A runner restart requires reconciliation. Studio checks the saved provider thread, turn, account, project path, and recorded evidence. A completed exact turn or saved step boundary can be recovered. Missing, active, or ambiguous turns are not replayed. Review changed files before cancelling an uncertain run and starting a new one.
+A runner restart preserves a pending human review or a paused Studio step boundary. Interrupted execution requires reconciliation: Studio checks the saved provider thread, turn, account, project path, and recorded evidence. A completed exact turn or saved step boundary can be recovered. Missing, active, or ambiguous turns are not replayed. Review changed files before cancelling an uncertain run and starting a new one.
 
 Native Claude terminal sharing, control of externally owned CLI sessions, and automatic synchronization with the OpenAI Codex desktop app are not supported. Browser QA uses Playwright through the runner.
 

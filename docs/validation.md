@@ -58,3 +58,14 @@ The actual app was inspected at 375 px and 900 px. Its page width stayed within 
 | Defaults and auxiliary actions | Persisted settings, explicit approval policy, frozen active-run settings, guide, export, reset scope, and error states |
 
 The normal test suite does not consume model quota. `scripts/probe-codex.ts`, `scripts/smoke-codex.ts`, `scripts/probe-controls.ts`, and `scripts/probe-recovery.ts` are deliberate local diagnostics. The smoke test expects an isolated server on port 4184 and uses port 4196 for its fixture. Live logs and provider identifiers stay under ignored `.local/`.
+
+## Human checkpoints and revision loops
+
+Checked on 2026-10-24, macOS arm64. The feature-only source tree passed strict TypeScript checks, the production build, and all 76 automated tests. Separate pending loading-feedback work was excluded from that tree.
+
+- Engine tests cover per-flow rule validation, frozen active-run rules, locked plan versions, stale approval rejection, fresh revision sessions, retained attempts, loop limits, scope changes, and restart recovery. Human approval leaves tool permissions intact.
+- A Chromium test saves independent flow rules, requests a plan revision, compares drafts, reloads a pending review, locks without continuing, reaches a loop limit, submits feedback, and approves the final result. It also verifies live form preservation, edits for future runs, response ordering, and the review panel at a 390 px viewport.
+- An actual Codex subscription run in an isolated project completed Planner, Coder, and Reviewer. Planner stopped before Coder started. Lock only kept the run paused, resume produced the requested file, and the final human approval completed the task. Automatic revision branches use model-free fixtures, not repeated live inference.
+- The local app on port 4184 displayed the new flow controls after its runner was refreshed. Existing settings were preserved and the Codex subscription connection was restored.
+
+The live run uses the official Codex CLI login. These additions have not received a live Claude run or cross-platform validation. Local test results do not establish remote CI status.
