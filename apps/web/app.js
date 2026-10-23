@@ -416,14 +416,29 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
 
   async function checkConnection(provider, auth, apiKey) {
     const connection = await request("/api/connections/check", { provider, auth, ...(apiKey ? { apiKey } : {}) });
-    state.connections = state.connections.filter(item => item.id !== connection.id);
-    state.connections.push(connection);
+    const index = state.connections.findIndex(item => item.id === connection.id);
+    if (index < 0) state.connections.push(connection); else state.connections[index] = connection;
     return connection;
+  }
+
+  function subscriptionView(connection) {
+    if (connection.auth !== "subscription") return "";
+    if (!connection.connected) return '<p class="meta">Connect to check the signed-in account and remaining usage.</p>';
+    const account = connection.account || {}, usage = connection.usage;
+    const dateLabel = value => {
+      const date = new Date(value);
+      return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }) : "Not reported";
+    };
+    return `<dl class="definition-list subscription-account"><dt>Account</dt><dd>${escape(account.email || "Not reported by the runtime")}</dd><dt>Plan</dt><dd>${escape(account.plan || "Not reported")}</dd>${account.organization ? `<dt>Organization</dt><dd>${escape(account.organization)}</dd>` : ""}</dl>
+      <section class="subscription-usage" aria-label="Subscription usage"><h3>Remaining usage</h3>${usage?.status === "available" ? usage.windows.map(window => {
+        const remaining = Math.max(0, Math.min(100, window.remainingPercent));
+        return `<div class="quota-window"><div><span>${escape(window.label)}</span><strong>${remaining.toLocaleString([], { maximumFractionDigits: 1 })}% left</strong></div><meter min="0" max="100" low="15" high="40" optimum="100" value="${remaining}" aria-label="${escape(window.label)} remaining usage"></meter><small>${window.resetsAt ? `Resets ${escape(dateLabel(window.resetsAt))}` : "Reset time not reported"}</small></div>`;
+      }).join("") : `<p class="meta">${escape(usage?.message || "Refresh to check your remaining usage.")}</p>`}<p class="meta usage-checked">${usage?.checkedAt ? `Checked ${escape(dateLabel(usage.checkedAt))}. ` : ""}Account-wide limits, shared with other sessions.</p></section>`;
   }
 
   function connectionsView() {
     return heading("Connect your <em>AI</em>", "Use an API key or your own subscription through an official local runtime.", button("connect", "Add connection", "plus", "primary"), "Bring your own account") +
-      `<div class="info-banner">${icon("shield")}<span>Subscription sign-in stays with the official CLI. API keys stay in runner memory and must be entered again after a runner restart. Billing modes never switch automatically.</span></div><div class="connection-grid">${state.connections.map(connection => `<section class="panel connection-card"><div class="card-top"><div class="actions"><div class="provider-logo ${connection.provider}">${connection.provider === "codex" ? "&lt;/&gt;" : "✳"}</div><div><h2>${providerName(connection.provider)}</h2><p>${providerName(connection.provider)} / ${authName(connection.auth)}</p></div></div><span class="badge ${connection.connected ? "" : "gray"}">${connection.connected ? "Connected" : "Disconnected"}</span></div><dl class="definition-list"><dt>Runtime</dt><dd>${escape(connection.version || "Not checked")}</dd><dt>Billing mode</dt><dd>${escape(connection.billingMode)}</dd><dt>Automatic API fallback</dt><dd>Off</dd><dt>Available models</dt><dd>${connection.models?.length || 0}</dd></dl>${connection.error ? `<p class="form-error">${escape(connection.error)}</p>` : ""}<div class="card-footer">${button("test-connection", "Check connection", "activity", "small", `data-id="${connection.id}"`)}${button("toggle-connection", connection.connected ? "Disconnect" : "Reconnect", connection.connected ? "plug" : "plus", "text small", `data-id="${connection.id}"`)}</div></section>`).join("") || '<p class="meta">Add your first connection to run an agent.</p>'}</div>`;
+      `<div class="info-banner">${icon("shield")}<span>Subscription sign-in stays with the official CLI. API keys stay in runner memory and must be entered again after a runner restart. Billing modes never switch automatically.</span></div><div class="connection-grid">${state.connections.map(connection => `<section class="panel connection-card"><div class="card-top"><div class="actions"><div class="provider-logo ${connection.provider}">${connection.provider === "codex" ? "&lt;/&gt;" : "✳"}</div><div><h2>${providerName(connection.provider)}</h2><p>${providerName(connection.provider)} / ${authName(connection.auth)}</p></div></div><span class="badge ${connection.connected ? "" : "gray"}">${connection.connected ? "Connected" : "Disconnected"}</span></div>${subscriptionView(connection)}<dl class="definition-list"><dt>Runtime</dt><dd>${escape(connection.version || "Not checked")}</dd><dt>Billing mode</dt><dd>${escape(connection.billingMode)}</dd><dt>Automatic API fallback</dt><dd>Off</dd><dt>Available models</dt><dd>${connection.models?.length || 0}</dd></dl>${connection.error ? `<p class="form-error">${escape(connection.error)}</p>` : ""}<div class="card-footer">${button("test-connection", connection.auth === "subscription" ? "Refresh account & usage" : "Check connection", "activity", "small", `data-id="${connection.id}"`)}${button("toggle-connection", connection.connected ? "Disconnect" : "Reconnect", connection.connected ? "plug" : "plus", "text small", `data-id="${connection.id}"`)}</div></section>`).join("") || '<p class="meta">Add your first connection to run an agent.</p>'}</div>`;
   }
 
   function runsView() {
@@ -953,7 +968,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     }
     else if (action === "test-connection") {
       const connection = state.connections.find(item => item.id === id); target.disabled = true;
-      try { const checked = await checkConnection(connection.provider, connection.auth); render(); toast(checked.connected ? "Runtime and selected authentication mode checked." : checked.error); } catch (error) { toast(error.message); } finally { target.disabled = false; }
+      try { const checked = await checkConnection(connection.provider, connection.auth); render(); toast(checked.connected ? (checked.auth === "subscription" ? (checked.usage?.status === "available" ? "Account and usage refreshed." : "Account checked. Usage is currently unavailable.") : "Runtime and selected authentication mode checked.") : checked.error); } catch (error) { toast(error.message); } finally { target.disabled = false; }
     }
     else if (action === "reconcile") await engine.reconcile();
     else if (action === "terminal-open" || action === "terminal-close") {
