@@ -106,6 +106,7 @@ test("Concurrent starts cannot prepare two workflows while account validation is
   const input = { projectId: "project", flowId: settings.activeFlowId, brief: "Read only", commandId: "first" };
   const first = studio.dispatch("run.start", input);
   await assert.rejects(studio.dispatch("run.start", { ...input, commandId: "second" }), /Only one run/);
+  await assert.rejects(studio.dispatch("project.remove", { id: "project", revision: 0 }), /finish starting/);
   release(new Error("Account check stopped for this test.")); await assert.rejects(first, /Account check stopped/);
   assert.equal(store.runs().length, 0);
 });
@@ -161,4 +162,53 @@ test("Worktrees retain ignored source instructions without reading outside proje
   await writeFile(join(path, "outside.md"), "Outside instructions");
   await symlink(join(path, "outside.md"), join(source, "CLAUDE.md"));
   await assert.rejects(projectInstructions(prepared.cwd, source), /inside the selected project/);
+});
+
+test("Removing projects updates selection but retains folders, worktrees and history", async t => {
+  const { Studio } = await import("../packages/engine/studio.ts");
+  const path = await directory(t), source = join(path, "project"), worktree = join(path, "worktree");
+  await mkdir(source); await mkdir(worktree);
+  await writeFile(join(source, "README.md"), "Keep source files"); await writeFile(join(worktree, "result.md"), "Keep worktree files");
+  const store = new Store(join(path, "state.sqlite")), studio = new Studio(store, path, path);
+  t.after(async () => { await studio.close(); store.close(); });
+  const state = studio.settings();
+  state.projects = [{ id: "first", name: "First", path: source, execution: { mode: "local", branchName: "" } }, { id: "second", name: "Second", path: worktree, execution: { mode: "local", branchName: "" } }];
+  state.activeProjectId = "first"; store.set("settings", state);
+  const past = { id: "past", status: "succeeded", createdAt: "2026-01-01", brief: "Saved task", flow: state.flows[0], project: state.projects[0], cwd: worktree, artifacts: [{ id: "report", content: "Verified evidence" }], steps: [{ messages: [{ text: "Saved conversation" }] }] } as unknown as Run;
+  store.saveRun(past, "run.completed");
+  await assert.rejects(studio.dispatch("project.remove", { id: "missing", revision: 0 }), /not found/);
+  await assert.rejects(studio.dispatch("project.remove", { id: "first", revision: 99 }), /another window/);
+  await studio.dispatch("project.remove", { id: "first", revision: 0 });
+  assert.equal(studio.settings().activeProjectId, "second"); assert.equal(studio.settings().projects.length, 1);
+  await studio.dispatch("project.remove", { id: "second", revision: 1 });
+  assert.equal(studio.settings().activeProjectId, null); assert.deepEqual(studio.settings().projects, []);
+  assert.deepEqual(store.run("past"), past);
+  assert.equal(await readFile(join(source, "README.md"), "utf8"), "Keep source files");
+  assert.equal(await readFile(join(worktree, "result.md"), "utf8"), "Keep worktree files");
+  const persisted = new Store(join(path, "state.sqlite"));
+  try { assert.deepEqual(persisted.get("settings"), studio.settings()); assert.equal(persisted.get("revision"), 2); } finally { persisted.close(); }
+});
+
+test("Active projects cannot be removed through either project removal or settings", async t => {
+  const { Studio } = await import("../packages/engine/studio.ts");
+  const path = await directory(t), store = new Store(join(path, "state.sqlite"));
+  const state = settingsSchema.parse(initialState());
+  state.projects = [{ id: "active", name: "Active", path, execution: { mode: "local", branchName: "" } }, { id: "other", name: "Other", path: join(path, "other"), execution: { mode: "local", branchName: "" } }];
+  state.activeProjectId = "active"; store.set("settings", state);
+  store.saveRun({ id: "active-run", createdAt: "2026-01-01", status: "running", project: state.projects[0], steps: [], artifacts: [] } as unknown as Run, "run.created");
+  const studio = new Studio(store, path, path); t.after(async () => { await studio.close(); store.close(); });
+  await assert.rejects(studio.dispatch("project.remove", { id: "active", revision: 0 }), /active task/);
+  await assert.rejects(studio.dispatch("settings.save", { state: { ...state, projects: [], activeProjectId: null }, revision: 0 }), /active task/);
+  assert.deepEqual(studio.settings(), state);
+  await studio.dispatch("project.remove", { id: "other", revision: 0 });
+  assert.equal(studio.settings().activeProjectId, "active"); assert.equal(studio.settings().projects.length, 1);
+});
+
+test("Project settings reject duplicate identities and a removed active selection", () => {
+  const state = settingsSchema.parse(initialState());
+  state.activeProjectId = "removed";
+  assert.equal(settingsSchema.safeParse(state).success, false);
+  state.activeProjectId = null;
+  state.projects = ["/first", "/second"].map(path => ({ id: "duplicate", name: "Project", path, execution: { mode: "local", branchName: "" } }));
+  assert.equal(settingsSchema.safeParse(state).success, false);
 });

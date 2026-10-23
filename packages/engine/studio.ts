@@ -58,23 +58,35 @@ export class Studio {
     step.messages.push({ id: randomUUID(), type, text: this.connections.redact(text), time: now() }); this.save(run, "message", { stepId: step.id, type });
   }
   private getRun(id: string) { const run = this.active?.id === id ? this.active : this.store.run(id); if (!run) throw new Error("Run not found."); return run; }
+  private saveSettings(input: Wire) {
+    const revision = this.store.get<number>("revision") ?? 0;
+    if (input.revision !== revision) throw new Error("Settings changed in another window. Reload before saving.");
+    const settings = settingsSchema.parse(input.state);
+    const removed = this.settings().projects.filter(project => !settings.projects.some(next => next.id === project.id));
+    if (removed.length && this.starting) throw new Error("Wait for the task to finish starting before removing a project.");
+    if (this.active && activeStatuses.includes(this.active.status) && removed.some(project => project.id === this.active!.project.id)) throw new Error("Finish or cancel the active task before removing its project.");
+    this.store.db.transaction(() => { this.store.set("settings", settings); this.store.set("revision", revision + 1); })();
+    return { revision: revision + 1 };
+  }
   async dispatch(method: string, input: Wire) {
     if (method === "ping") return { pid: process.pid, version: "0.1.0" };
     if (method === "state") return this.store.state();
     if (method === "events") return { events: this.store.events(z.number().int().min(0).parse(input.after ?? 0)), seq: this.store.seq() };
-    if (method === "settings.save") {
-      const revision = this.store.get<number>("revision") ?? 0;
-      if (input.revision !== revision) throw new Error("Settings changed in another window. Reload before saving.");
-      const settings = settingsSchema.parse(input.state);
-      this.store.db.transaction(() => { this.store.set("settings", settings); this.store.set("revision", revision + 1); })();
-      return { revision: revision + 1 };
-    }
+    if (method === "settings.save") return this.saveSettings(input);
     if (method === "catalog") return this.catalog.scan(input.roots ?? this.settings().skillRoots);
     if (method === "skill") return this.catalog.detail(z.string().parse(input.id));
     if (method === "snapshots") return this.catalog.snapshot(input.bindings);
     if (method === "snapshot") return this.catalog.readSnapshot(input.version);
     if (method === "folders") return folders(input.path);
     if (method === "project") return inspectProject(input.path, input.execution);
+    if (method === "project.remove") {
+      const id = z.string().min(1).parse(input.id), previous = this.settings();
+      if (!previous.projects.some(project => project.id === id)) throw new Error("Project not found.");
+      const projects = previous.projects.filter(project => project.id !== id);
+      const activeProjectId = previous.activeProjectId === id ? projects[0]?.id ?? null : previous.activeProjectId;
+      const result = this.saveSettings({ state: { ...previous, projects, activeProjectId }, revision: input.revision });
+      return { projects, activeProjectId, revision: result.revision };
+    }
     if (method === "connection.check") return this.connections.check(input);
     if (method === "connection.login") return this.connections.login(z.enum(["codex", "claude"]).parse(input.provider));
     if (method === "connection.disconnect") {

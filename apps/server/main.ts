@@ -52,7 +52,7 @@ app.get("/api/bootstrap", async (request, reply) => {
 });
 app.get("/api/status", async () => ({ service: "agent-studio", roots: (await rpc("state")).skillRoots }));
 app.get("/api/state", async () => rpc("state"));
-const operations: Record<string, string> = { catalog: "catalog", skill: "skill", snapshots: "snapshots", snapshot: "snapshot", folders: "folders", project: "project", settings: "settings.save", "connections/check": "connection.check", "connections/login": "connection.login", "connections/disconnect": "connection.disconnect", "runs/start": "run.start", "runs/read": "run.read", "runs/control": "run.control", "runs/reconcile": "run.reconcile", reset: "reset" };
+const operations: Record<string, string> = { catalog: "catalog", skill: "skill", snapshots: "snapshots", snapshot: "snapshot", folders: "folders", project: "project", "projects/remove": "project.remove", settings: "settings.save", "connections/check": "connection.check", "connections/login": "connection.login", "connections/disconnect": "connection.disconnect", "runs/start": "run.start", "runs/read": "run.read", "runs/control": "run.control", "runs/reconcile": "run.reconcile", reset: "reset" };
 for (const [path, method] of Object.entries(operations)) app.post(`/api/${path}`, async request => {
   const { commandId = randomUUID(), ...input } = z.record(z.string(), z.unknown()).parse(request.body);
   return rpc(method, input, z.string().uuid().parse(commandId));

@@ -1,5 +1,5 @@
 import { roles, models, prompts, initialState, initializeFlows } from "../../packages/contracts/defaults.js";
-import { initial, StudioEngine, request, queueSettings, flush, reset, saveStatus } from "./runtime.js";
+import { initial, StudioEngine, request, queueSettings, flush, reset, removeProject, saveStatus } from "./runtime.js";
 import "./skills.js";
 import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js";
 (() => {
@@ -535,7 +535,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
   }
 
   function projectPicker() {
-    showModal("Projects", `<div class="project-list">${state.projects.map(project => `<button class="project-choice" data-action="select-project" data-id="${escape(project.id)}">${icon("folder")}<span><strong>${escape(project.name)}</strong><span>${escape(project.path)}</span></span>${project.id === state.activeProjectId ? icon("check") : ""}</button>`).join("") || '<p class="project-empty">No projects yet.</p>'}</div>`, button("new-project", "Create project", "plus", "primary"), false, "");
+    showModal("Projects", `<div class="project-list">${state.projects.map(project => `<div class="project-row"><button class="project-choice" data-action="select-project" data-id="${escape(project.id)}">${icon("folder")}<span><strong>${escape(project.name)}</strong><span>${escape(project.path)}</span></span>${project.id === state.activeProjectId ? icon("check") : ""}</button>${button("remove-project", "", "trash", "small icon-only danger", `data-id="${escape(project.id)}" aria-label="Remove ${escape(project.name)}" title="${engine.isActive() && engine.run.project.id === project.id ? "Finish or cancel the active task first" : "Remove project from Studio"}"`, engine.isActive() && engine.run.project.id === project.id)}</div>`).join("") || '<p class="project-empty">No projects yet.</p>'}</div><p class="meta">Removing a project preserves its files, worktrees and task history.</p>`, button("new-project", "Create project", "plus", "primary"), false, "");
   }
 
   function projectModal() {
@@ -722,6 +722,23 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     else if (action === "close-navigation") closeNavigation();
     else if (action === "navigation-actions") { ui.navigationActions = !ui.navigationActions; render(true); }
     else if (action === "project-picker") projectPicker();
+    else if (action === "remove-project") {
+      const project = state.projects.find(item => item.id === id);
+      if (!project) return;
+      showModal("Remove project?", `<p>Remove <strong>${escape(project.name)}</strong> from this workspace?</p><p class="project-path">${escape(project.path)}</p><p>Your folder, worktrees and past tasks will remain. You can add this folder again later.</p><p class="form-error" id="project-remove-error" role="alert" hidden></p>`, button("project-picker", "Keep project", "") + button("confirm-remove-project", "Remove project", "trash", "danger", `data-id="${escape(id)}"`), false, "");
+    }
+    else if (action === "confirm-remove-project") {
+      target.disabled = true;
+      try {
+        const result = await removeProject(id);
+        state.projects = result.projects; state.activeProjectId = result.activeProjectId;
+        closeModal(); render(); toast("Project removed from Studio. Files and task history are preserved.");
+      } catch (error) {
+        const box = document.getElementById("project-remove-error");
+        if (box) { box.textContent = error.message; box.hidden = false; } else toast(error.message);
+        target.disabled = false;
+      }
+    }
     else if (action === "flow-picker") flowPicker();
     else if (action === "new-flow") flowForm();
     else if (action === "rename-flow") flowForm("rename", id);

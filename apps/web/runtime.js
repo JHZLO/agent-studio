@@ -62,6 +62,9 @@ export async function flush() {
 export async function reset() {
   await flush(); const state = await request("/api/reset", {}); revision = state.revision; return state;
 }
+export async function removeProject(id) {
+  await flush(); const result = await request("/api/projects/remove", { id, revision }); revision = result.revision; return result;
+}
 
 export class StudioEngine {
   constructor(onChange, run = null) { this.onChange = onChange; this.run = run; this.closed = false; this.seq = initial.state.eventSeq; this.connect(); }

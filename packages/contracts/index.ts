@@ -22,6 +22,8 @@ export const settingsSchema = z.object({
   if (!value.flows.some(f => f.id === value.activeFlowId && !f.archived)) ctx.addIssue({ code: "custom", message: "Keep an active flow selected." });
   if (value.flows.some(f => new Set(f.workflow).size !== f.workflow.length || f.workflow.some(id => !ids.has(id)))) ctx.addIssue({ code: "custom", message: "Flows must reference unique existing presets." });
   if (new Set(value.projects.map(p => p.path)).size !== value.projects.length) ctx.addIssue({ code: "custom", message: "This project folder is already registered." });
+  if (new Set(value.projects.map(p => p.id)).size !== value.projects.length) ctx.addIssue({ code: "custom", message: "Project IDs must be unique." });
+  if (value.activeProjectId !== null && !value.projects.some(p => p.id === value.activeProjectId)) ctx.addIssue({ code: "custom", message: "Select a registered project or clear the selection." });
 });
 export type Settings = z.infer<typeof settingsSchema>;
 export type Agent = z.infer<typeof agentSchema> & { skillSnapshots?: Binding[] };
