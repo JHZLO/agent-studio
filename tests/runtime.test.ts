@@ -46,6 +46,15 @@ test("Real browser and HTTP tools retain network, accessibility and screenshot e
   assert.equal((await tools.call("studio_http", { url: "http://127.0.0.1:4183/api/bootstrap", method: "GET", headers: {}, body: "" })).success, false);
   assert.equal((await tools.call("studio_http", { url: "https://example.test", method: "GET", headers: {}, body: "" })).success, false);
 });
+test("k6 runs a bounded local test and refuses an excessive workload", async t => {
+  const path = await directory(t); await mkdir(join(path, "project"));
+  const app = createServer((_request, response) => response.end("OK")), port = await listen(app); t.after(() => close(app));
+  const tools = toolbox(path); t.after(() => tools.close());
+  const result = await tools.call("studio_load_test", { url: `http://127.0.0.1:${port}`, vus: 1, seconds: 1 });
+  assert.equal(result.success, true, JSON.stringify(result.result)); assert.equal((result.result as any).exitCode, 0);
+  assert.match((result.result as any).output, /http_reqs/);
+  assert.equal((await tools.call("studio_load_test", { url: `http://127.0.0.1:${port}`, vus: 100, seconds: 60 })).success, false);
+});
 test("A recovered Codex host retains identity and stops its owned process", { timeout: 15000 }, async t => {
   const path = await mkdtemp("/tmp/studio-host-");
   const host = await CodexHost.start(join(path, "codex.sock"));

@@ -9,9 +9,10 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "setup": "node scripts/install-native.mjs && playwright install chromium",
+    "setup": "node scripts/install-native.mjs && node scripts/install-k6.mjs && playwright install chromium",
     "test": "node --import tsx --test tests/*.test.ts",
-    "probe:codex": "node --import tsx scripts/probe-codex.ts"
+    "probe:codex": "node --import tsx scripts/probe-codex.ts",
+    "audit:k6": "node scripts/audit-k6.mjs"
   },
   "dependencies": {
     "@openai/codex": "0.163.0",

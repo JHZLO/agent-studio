@@ -22,6 +22,7 @@ const specs = [
   { name: "studio_shell", permission: "shell", description: "Run a shell command in the project sandbox. Set background=true only for a local test server. Do not deploy, push, or target production. Foreground timeout is at most 120 seconds.", inputSchema: object({ command: string, timeoutSeconds: { type: "integer", minimum: 1, maximum: 120 }, background: { type: "boolean" } }, ["command", "timeoutSeconds", "background"]) },
   { name: "studio_http", permission: "shell", description: "Call a loopback test API and record actual status and response. Redirects are not followed. External targets require explicit approval.", inputSchema: object({ url: string, method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }, body: string, headers: { type: "object", additionalProperties: { type: "string" } } }, ["url", "method", "body", "headers"]) },
   { name: "studio_browser", permission: "browser", description: "Use an isolated Playwright Chromium browser for QA. Actions: goto (URL), inspect (text, controls, recent HTTP statuses and errors), fill (selector,value), click (selector), press (selector,value), assertText (wait for value), screenshot. Reuse the same page between calls. Inspect after visible feedback to verify its network status.", inputSchema: object({ action: { type: "string", enum: ["goto", "inspect", "fill", "click", "press", "assertText", "screenshot"] }, selector: string, value: string }, ["action", "selector", "value"]) },
+  { name: "studio_load_test", permission: "shell", description: "Run a bounded k6 GET load test against a loopback HTTP endpoint. Maximum 5 virtual users and 10 seconds. Requires the locally installed k6 executable.", inputSchema: object({ url: string, vus: { type: "integer", minimum: 1, maximum: 5 }, seconds: { type: "integer", minimum: 1, maximum: 10 } }, ["url", "vus", "seconds"]) },
 ] as const;
 export const toolSpecs = (step: Step) => specs.filter(spec => step.agent.tools.includes(spec.permission)).map(({ permission, ...spec }) => ({ type: "function", ...spec }));
 const secretPath = (path: string) => path.split(/[\\/]/).some(part => /^\.(git|env|ssh|aws|gnupg|codex|claude|local)$/.test(part) || /^\.env[.]/.test(part) || /(?:credentials|private[._-]?key|\.pem$|\.key$)/i.test(part));
@@ -164,6 +165,14 @@ export class Toolbox {
       return { url: url.toString(), status: response.status, headers: Object.fromEntries([...response.headers].filter(([key]) => !/cookie|authorization/i.test(key))), body: this.context.redact(body), truncated };
     }
     if (name === "studio_browser") return this.browserAction(input);
+    if (name === "studio_load_test") {
+      const data = z.object({ url: z.string(), vus: z.number().int().min(1).max(5), seconds: z.number().int().min(1).max(10) }).parse(input);
+      const url = await this.target(data.url, false);
+      await mkdir(this.artifactDir, { recursive: true, mode: 0o700 });
+      const script = join(this.artifactDir, `k6-${randomUUID()}.js`);
+      await writeFile(script, `import http from 'k6/http'; import {check,sleep} from 'k6'; export const options={vus:${data.vus},duration:'${data.seconds}s',maxRedirects:0,thresholds:{http_req_failed:['rate<0.01'],checks:['rate==1']}}; export default function(){const r=http.get(${JSON.stringify(url.toString())});check(r,{'status below 400':r=>r.status<400});sleep(0.2);}`, { mode: 0o600 });
+      return this.command(process.env.AGENT_STUDIO_K6 || join(root, ".local/tools/k6"), ["run", "--no-usage-report", "--summary-mode=full", script], 20000, false);
+    }
     throw new Error("Unknown tool.");
   }
   private async command(binary: string, args: string[], timeout: number, background: boolean) {
