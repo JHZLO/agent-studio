@@ -6,6 +6,7 @@ node_modules/
 /coverage/
 .venv/
 __pycache__/
+/.local/
 
 # Editor directories and files
 .vscode/*

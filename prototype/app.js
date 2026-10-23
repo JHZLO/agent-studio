@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const { roles, models, prompts, initialState, DemoEngine } = window.StudioDemo;
+  const { roles, models, prompts, initialState, initializeFlows, DemoEngine } = window.StudioDemo;
   const storageKey = "agent-studio-prototype-v1";
   const app = document.getElementById("app");
   const modal = document.getElementById("modal");
@@ -11,24 +11,43 @@
     const stored = JSON.parse(localStorage.getItem(storageKey) || "null");
     state = stored?.version === 1 && Array.isArray(stored.agents) && stored.agents.length &&
       stored.agents.every(agent => roles[agent.role] && models[agent.provider] && Array.isArray(agent.tools)) &&
-      Array.isArray(stored.workflow) && stored.workflow.every(id => stored.agents.some(agent => agent.id === id)) &&
+      (stored.flows?.length ? stored.flows.every(flow => typeof flow.id === "string" && typeof flow.name === "string" && Array.isArray(flow.workflow) && flow.workflow.every(id => stored.agents.some(agent => agent.id === id))) : Array.isArray(stored.workflow) && stored.workflow.every(id => stored.agents.some(agent => agent.id === id))) &&
       Array.isArray(stored.connections) && Array.isArray(stored.history) ? stored : initialState();
   } catch {
     state = initialState();
     persistent = false;
   }
+  for (const agent of state.agents) agent.skillBindings ??= [];
+  initializeFlows(state);
+  state.projects ??= [];
+  state.activeProjectId ??= state.projects[0]?.id || null;
+  const catalog = new window.SkillCatalog();
 
   const ui = {
-    view: "workflow", tab: "builder", selected: state.workflow[0] || state.agents[0].id,
+    view: "home", selected: null, artifactId: null, pendingOrder: null,
     sessionTab: "conversation", step: 0, followRun: true, historyId: null,
     linkFrom: null, zoom: null, connectProvider: "codex", connectAuth: "subscription",
+    skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", starting: false,
+    navigationOpen: false, navigationActions: false,
+    projectDraft: null, folderRequest: null, folderListing: null,
   };
   let toastTimer;
   let connectionTimer;
   let resizeObserver;
   let lastFocused;
+  let renderedView = null;
+  let seenMessages = {};
+  const mobileNavigation = matchMedia("(max-width: 600px)");
 
   const iconPaths = {
+    folder: '<path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm0 2h18"/>',
+    computer: '<rect x="4" y="3" width="16" height="13" rx="2"/><path d="M2 20h20M9 16v4m6-4v4"/>',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',
+    archive: '<path d="M4 8v12h16V8M3 3h18v5H3zM9 12h6"/>',
+    sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m6-11-3 3 3 3"/>',
+    menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
     grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     flow: '<rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M6 9v9h9M9 6h9v9"/>',
     agents: '<circle cx="9" cy="8" r="3"/><path d="M3 20v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2"/>',
@@ -74,10 +93,20 @@
   const providerName = provider => provider === "codex" ? "Codex" : "Claude Code";
   const authName = auth => auth === "api" ? "API key" : "Subscription";
   const agentStyle = agent => `--agent-color:${roles[agent.role].color};--agent-bg:${roles[agent.role].background}`;
-  const agentIcon = (agent, large = false) => `<span class="agent-icon${large ? " large" : ""}" style="${agentStyle(agent)}">${icon(roles[agent.role].icon)}</span>`;
+  const agentIcon = (agent, large = false, mood = "") => `<span class="agent-icon${large ? " large" : ""}${mood ? ` is-${mood}` : ""}" data-role="${agent.role}" style="${agentStyle(agent)}"><span class="agent-eyes"><i></i><i></i></span>${icon(roles[agent.role].icon, "agent-badge")}</span>`;
+  const brandMark = '<svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="12.5" cy="13.5" r="8.5" fill="#dccfff" stroke="#2b2238" stroke-width="1.6"/><circle cx="23.5" cy="13.5" r="8.5" fill="#c4efd9" stroke="#2b2238" stroke-width="1.6"/><circle cx="18" cy="23" r="9" fill="#ffd0e1" stroke="#2b2238" stroke-width="1.6"/><ellipse cx="15.2" cy="22.5" rx="1.3" ry="1.8" fill="#2b2238"/><ellipse cx="20.8" cy="22.5" rx="1.3" ry="1.8" fill="#2b2238"/></svg>';
+  const tints = ["lavender", "sky", "mint", "butter", "rose", "peach"];
+  const tintOf = text => tints[[...String(text)].reduce((sum, character) => sum + character.charCodeAt(0), 0) % tints.length];
+  const briefIdeas = [
+    "Add a newsletter signup with duplicate-safe validation",
+    "Write QA cases for the password reset flow",
+    "Review the checkout form for accessibility gaps",
+  ];
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
   const button = (action, label, iconName, className = "", data = "", disabled = false) => `<button type="button" class="btn ${className}" data-action="${action}" ${data}${disabled ? " disabled" : ""}>${iconName ? icon(iconName) : ""}${label}</button>`;
   const statusNames = { running: "Running", paused: "Paused", waiting_approval: "Needs approval", succeeded: "Completed", failed: "Blocked", cancelled: "Cancelled", queued: "Queued" };
   const statusBadge = status => `<span class="badge ${["paused", "waiting_approval"].includes(status) ? "amber" : status === "failed" ? "red" : status === "cancelled" ? "gray" : ""}">${status === "running" ? icon("loader", "spinning") : ""}${statusNames[status] || "Ready"}</span>`;
+  const roleOutputs = { planner: "Plan + QA sheet", coder: "Code changes", reviewer: "Review findings", backend: "API test results", frontend: "Browser QA", documenter: "Final handoff" };
 
   function persist() {
     try { localStorage.setItem(storageKey, JSON.stringify(state)); }
@@ -85,10 +114,36 @@
   }
 
   function onRunChange(run) {
+    const previous = state.run?.status;
     state.run = run;
     if (ui.followRun && run) ui.step = Math.min(run.index, run.steps.length - 1);
     persist();
     render(true);
+    if (run?.status === "succeeded" && previous && previous !== "succeeded") celebrate();
+  }
+
+  function stamp(text) {
+    if (reducedMotion.matches) return;
+    const element = document.createElement("div");
+    element.className = "stamp";
+    element.setAttribute("aria-hidden", "true");
+    element.textContent = text;
+    document.body.append(element);
+    setTimeout(() => element.remove(), 1400);
+  }
+
+  function celebrate() {
+    if (reducedMotion.matches) return;
+    const colors = ["--lavender-2", "--sky-2", "--mint-2", "--butter-2", "--rose-2", "--peach-2"];
+    const burst = document.createElement("div");
+    burst.className = "confetti";
+    burst.setAttribute("aria-hidden", "true");
+    burst.innerHTML = Array.from({ length: 36 }, (_, index) => {
+      const angle = Math.random() * Math.PI * 2, distance = 160 + Math.random() * 260;
+      return `<i style="--x:${Math.round(Math.cos(angle) * distance)}px;--y:${Math.round(Math.sin(angle) * distance + 120)}px;--r:${Math.round(Math.random() * 720 - 360)}deg;--c:var(${colors[index % colors.length]});--d:${(Math.random() * .15).toFixed(2)}s"></i>`;
+    }).join("");
+    document.body.append(burst);
+    setTimeout(() => burst.remove(), 1900);
   }
 
   let engine = new DemoEngine(onRunChange, state.run);
@@ -107,34 +162,83 @@
     return ui.historyId ? state.history.find(run => run.id === ui.historyId) : state.run;
   }
 
+  function currentFlow() {
+    return state.flows.find(flow => flow.id === state.activeFlowId);
+  }
+
   function navItem(view, name, iconName, count = null) {
-    return `<button type="button" class="nav-item ${ui.view === view ? "active" : ""}" data-action="navigate" data-view="${view}" aria-label="${name}" ${ui.view === view ? 'aria-current="page"' : ""}>${icon(iconName)}<span>${name}</span>${count !== null ? `<span class="nav-count">${count}</span>` : ""}</button>`;
+    const active = ui.view === view || (view === "runs" && ui.view === "run");
+    return `<button type="button" class="nav-item ${active ? "active" : ""}" data-action="navigate" data-view="${view}" aria-label="${name}" title="${name}" ${active ? 'aria-current="page"' : ""}>${icon(iconName)}<span class="nav-item-label">${name}</span>${count !== null ? `<span class="nav-count">${count}</span>` : ""}</button>`;
   }
 
   function sidebar() {
-    return `<aside class="sidebar"><div class="brand"><span class="brand-mark"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="4" width="13" height="13" rx="2"/><rect x="12" y="12" width="13" height="13" rx="2"/></svg></span><span class="brand-name">agent studio<span style="color:#91a57d">.</span></span></div>
-      <div class="workspace-label"><span class="avatar">ME</span><div><strong>Personal workspace</strong><small>Your local environment</small></div></div>
-      <div class="eyebrow nav-label">Your studio</div><nav class="nav" aria-label="Main navigation">
-        ${navItem("workflow", "Workflow", "flow")}${navItem("agents", "Agents", "agents", state.agents.length)}${navItem("connections", "Connections", "plug")}${navItem("runs", "Runs", "clock", state.history.length + (state.run ? 1 : 0))}${navItem("defaults", "Defaults", "sliders")}
-      </nav><div class="sidebar-bottom"><div class="context-note">${icon("leaf")}<strong>Fresh context. Clear work.</strong><p>Each agent starts a new session with just the context it needs.</p></div>
-      <button class="nav-item" data-action="help" aria-label="How this demo works">${icon("help")}<span>How this works</span></button>
-      <button class="nav-item" data-action="reset" aria-label="Reset demo">${icon("reset")}<span>Reset demo</span></button>
-      <div class="sidebar-status"><span class="dot"></span>Demo engine / browser only</div></div></aside>`;
+    const collapsed = Boolean(state.navigationCollapsed);
+    return `<div class="mobile-menu-bar"><span class="mobile-brand">${brandMark}Agent Studio</span><button class="nav-control" data-action="open-navigation" aria-label="Open navigation" aria-controls="studio-navigation" aria-expanded="${ui.navigationOpen}">${icon("menu")}</button></div><button class="navigation-backdrop" data-action="close-navigation" aria-label="Close navigation overlay" tabindex="-1" ${ui.navigationOpen ? "" : "hidden"}></button>
+      <aside id="studio-navigation" class="sidebar" aria-label="Workspace navigation"><div class="sidebar-header"><div class="brand"><span class="brand-mark">${brandMark}</span><span class="brand-name">Agent <em>Studio</em></span></div><button class="nav-control nav-collapse" data-action="toggle-sidebar" aria-label="${collapsed ? "Expand sidebar" : "Collapse sidebar"}" title="${collapsed ? "Expand sidebar" : "Collapse sidebar"}">${icon("sidebar")}</button><button class="nav-control mobile-nav-close" data-action="close-navigation" aria-label="Close navigation">${icon("close")}</button></div>
+      <div class="workspace-label"><span class="workspace-dot"></span>Personal workspace<span class="workspace-tag">LOCAL</span></div>
+      <nav class="nav" aria-label="Main navigation">
+        ${navItem("home", "New task", "plus")}
+        <div class="nav-group" role="group" aria-label="Work"><div class="nav-label">Work</div>${navItem("runs", "Tasks", "clock", state.history.length + (state.run ? 1 : 0))}</div>
+        <div class="nav-group project-nav" role="group" aria-label="Projects"><div class="project-nav-heading"><span class="nav-label">Projects</span><button class="nav-control" data-action="new-project" aria-label="Create project" title="Create project">${icon("plus")}</button></div>${state.projects.map(project => `<button class="nav-item project-item ${ui.view === "home" && project.id === state.activeProjectId ? "project-current" : ""}" data-action="select-project" data-id="${escape(project.id)}" aria-label="Open project ${escape(project.name)}" title="${escape(project.path)}">${icon("folder")}<span class="nav-item-label">${escape(project.name)}</span></button>`).join("") || `<button class="nav-item" data-action="new-project" aria-label="Add project" title="Add project">${icon("folder")}<span class="nav-item-label">Add project</span></button>`}</div>
+        <div class="nav-group" role="group" aria-label="Build"><div class="nav-label">Build</div>${navItem("team", "Flows", "flow")}${navItem("agents", "Agent library", "agents")}${navItem("skills", "Skill library", "grid")}</div>
+        <div class="nav-group" role="group" aria-label="Settings"><div class="nav-label">Settings</div>${navItem("connections", "Connections", "plug")}${navItem("defaults", "Defaults", "sliders")}</div>
+      </nav><div class="sidebar-bottom"><div class="sidebar-actions"><button class="nav-utility" data-action="help" aria-label="How this demo works" title="Quick guide">${icon("help")}<span>Quick guide</span></button><button class="nav-control" data-action="navigation-actions" aria-label="Workspace actions" title="Workspace actions" aria-expanded="${ui.navigationActions}" aria-controls="navigation-actions">${icon("more")}</button><div id="navigation-actions" class="navigation-actions" ${ui.navigationActions ? "" : "hidden"}><span class="nav-label">Demo controls</span><button class="nav-reset" data-action="reset" aria-label="Reset demo">${icon("reset")}<span>Reset demo<small>Clear presets and saved runs</small></span></button></div></div>
+      <div class="sidebar-status" title="${catalog.mode === "local" ? "Local skills connected" : "Demo workspace"}"><span class="dot"></span><span>${catalog.mode === "local" ? "Local skills connected" : "Demo workspace"}</span><span class="sidebar-version">v0.1</span></div></div></aside>`;
   }
 
-  function heading(title, subtitle, actions, eyebrow = "Your personal agent workspace") {
-    return `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p class="subtitle">${subtitle}</p></div><div class="actions">${actions}</div></div>`;
+  function heading(title, subtitle, actions, eyebrow = "") {
+    return `<div class="page-heading"><div>${eyebrow ? `<div class="eyebrow">${eyebrow}</div>` : ""}<h1>${title}</h1>${subtitle ? `<p class="subtitle">${subtitle}</p>` : ""}</div><div class="actions">${actions}</div></div>`;
+  }
+
+  function syncNavigation() {
+    const open = mobileNavigation.matches && ui.navigationOpen;
+    const sidebar = app.querySelector(".sidebar");
+    sidebar.inert = mobileNavigation.matches && !open;
+    app.querySelector(".main").inert = open;
+    app.querySelector(".mobile-menu-bar").inert = open;
+    document.body.classList.toggle("navigation-locked", open);
+    if (open) { sidebar.setAttribute("role", "dialog"); sidebar.setAttribute("aria-modal", "true"); }
+    else { sidebar.removeAttribute("role"); sidebar.removeAttribute("aria-modal"); }
+  }
+
+  function closeNavigation() {
+    ui.navigationOpen = false; ui.navigationActions = false;
+    render(true);
+    app.querySelector('[data-action="open-navigation"]')?.focus();
+  }
+
+  function closeNavigationActions() {
+    ui.navigationActions = false;
+    const popup = document.getElementById("navigation-actions");
+    if (popup) popup.hidden = true;
+    app.querySelector('[data-action="navigation-actions"]')?.setAttribute("aria-expanded", "false");
   }
 
   function render(live = false) {
-    const preserved = live && ui.view === "workflow" && ui.tab === "builder" ? [document.querySelector(".inspector"), document.querySelector(".brief-panel")] : [];
-    const viewNames = { workflow: "Feature delivery", agents: "Agent library", connections: "AI connections", runs: "Run history", defaults: "Workspace defaults" };
-    app.innerHTML = `<div class="shell">${sidebar()}<div class="main"><header class="topbar"><div class="crumbs">Personal workspace <span>/</span><strong>${viewNames[ui.view]}</strong></div><span class="prototype-pill"><span class="dot"></span>Interactive prototype</span></header><main id="main-content" class="page">${ui.view === "workflow" ? workflowView() : ui.view === "agents" ? agentsView() : ui.view === "connections" ? connectionsView() : ui.view === "runs" ? runsView() : defaultsView()}</main></div></div>`;
+    const focused = document.activeElement;
+    const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
+    const preserved = live ? [app.querySelector(".inspector-form"), document.getElementById("task-brief")] : [];
+    const scrollPositions = live ? [...document.querySelectorAll(".session-content, .evidence-body, .run-steps, .canvas-viewport, .sidebar")].map(element => [element.className, element.scrollTop, element.scrollLeft]) : [];
+    const viewNames = { home: "New task", team: "Flows", run: "Task details", agents: "Agent library", skills: "Skill library", connections: "AI connections", runs: "Tasks", defaults: "Workspace defaults" };
+    const entering = renderedView !== ui.view;
+    app.innerHTML = `<div class="shell ${state.navigationCollapsed ? "sidebar-collapsed" : ""} ${ui.navigationOpen ? "navigation-open" : ""}">${sidebar()}<div class="main" tabindex="-1"><header class="topbar"><div class="crumbs">Workspace ${icon("chevron")}<strong>${viewNames[ui.view]}</strong></div><span class="prototype-pill">${icon("terminal")}Local prototype<span class="topbar-avatar">J</span></span></header><main id="main-content" class="page page-${ui.view}${entering ? " page-enter" : ""}">${ui.view === "home" ? homeView() : ui.view === "team" ? teamView() : ui.view === "run" ? runView() : ui.view === "agents" ? agentsView() : ui.view === "skills" ? skillsView() : ui.view === "connections" ? connectionsView() : ui.view === "runs" ? runsView() : defaultsView()}</main></div></div>`;
+    syncNavigation();
     for (const panel of preserved) {
       if (!panel) continue;
-      const next = document.querySelector(panel.classList.contains("inspector") ? ".inspector" : ".brief-panel");
+      const next = app.querySelector(panel.id === "task-brief" ? "#task-brief" : ".inspector-form");
       if (next) next.replaceWith(panel);
     }
+    for (const [className, scrollTop, scrollLeft] of scrollPositions) {
+      const element = document.getElementsByClassName(className)[0];
+      if (element) { element.scrollTop = scrollTop; element.scrollLeft = scrollLeft; }
+    }
+    const conversation = live && ui.followRun ? document.querySelector(".session-content") : null;
+    if (conversation?.querySelector(".fresh")) conversation.scrollTop = conversation.scrollHeight;
+    if (live && focusAttributes.length) {
+      const replacement = focused.isConnected ? focused : [...app.querySelectorAll("button, input, textarea, select")].find(element => focusAttributes.every(([name, value]) => element.getAttribute(name) === value));
+      replacement?.focus({ preventScroll: true });
+    }
+    if (renderedView !== ui.view) { window.scrollTo(0, 0); renderedView = ui.view; }
     resizeObserver?.disconnect();
     const viewport = document.querySelector(".canvas-viewport");
     if (viewport) {
@@ -144,21 +248,30 @@
     }
   }
 
-  function workflowView() {
+  function homeView() {
+    const project = activeProject();
+    const execution = project?.execution;
+    const recent = [state.run, ...state.history].filter(run => run && (run.project?.id || null) === (project?.id || null)).slice(0, 3);
+    const crew = currentFlow().workflow.map(id => state.agents.find(agent => agent.id === id));
+    const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+    const crewStack = crew.length ? `<span class="crew-stack">${crew.slice(0, 5).map(agent => agentIcon(agent)).join("")}${crew.length > 5 ? `<span class="crew-more">+${crew.length - 5}</span>` : ""}</span>` : "";
+    const lineup = `<aside class="lineup" aria-label="Relay order"><div class="lineup-head"><span class="eyebrow">Relay order</span>${button("navigate", "Edit", "edit", "text small", 'data-view="team" aria-label="Edit flow"')}</div>${crew.length ? `<ol>${crew.map((agent, index) => `<li style="${agentStyle(agent)}">${agentIcon(agent)}<span><strong>${escape(agent.name)}</strong><small>${roleOutputs[agent.role]}</small></span><span class="lineup-num">${String(index + 1).padStart(2, "0")}</span></li>`).join("")}</ol>` : '<p class="lineup-empty">No agents in this flow yet.</p>'}<p class="lineup-note">${icon("leaf")}Each step opens a fresh session and passes a short handoff.</p></aside>`;
+    return `<div class="task-start"><header class="hello"><span class="eyebrow">${today}</span><h1>What should your <em>team</em> take on today?</h1></header><div class="home-grid"><div class="home-main"><section class="task-composer" aria-label="Start a task"><div class="composer-context"><div class="composer-location">${button("project-picker", escape(project?.name || "Select project"), "folder", "composer-project", `aria-label="Select project" title="${escape(project?.path || "Select a local project")}"`)}<span class="computer-label">${icon("computer")}This computer</span></div>${button("project-settings", execution?.mode === "worktree" ? "New worktree" : "Local", execution?.mode === "worktree" ? "branch" : "sliders", "execution-button", 'aria-label="Local environment settings"', !project)}</div><label class="sr-only" for="task-brief">Task brief</label><textarea id="task-brief" maxlength="2000" rows="4" placeholder="Describe the task...">${escape(state.brief)}</textarea><div class="composer-footer"><button type="button" class="crew-picker" data-action="flow-picker" aria-label="Select flow">${crewStack}<span><small>Flow</small><strong>${escape(currentFlow().name)}</strong></span>${icon("chevron")}</button>${button("run", ui.starting ? "Preparing..." : engine.isActive() ? "View active task" : "Run preview", "arrow", "primary start-task", "", ui.starting)}</div></section><div class="brief-ideas" role="group" aria-label="Example tasks"><span>Try</span>${briefIdeas.map((idea, index) => `<button type="button" class="idea-chip" data-action="use-idea" data-index="${index}">${icon("spark")}${escape(idea)}</button>`).join("")}</div>${recent.length ? `<section class="recent-work"><div class="section-title"><h2>Recent tasks</h2>${button("navigate", "All tasks", "arrow", "text", 'data-view="runs"')}</div>${recent.map(run => `<button class="recent-task" data-action="open-run" data-id="${escape(run.id)}">${icon("clock")}<span><strong>${escape(run.brief)}</strong></span>${statusBadge(run.status)}${icon("chevron")}</button>`).join("")}</section>` : ""}</div>${lineup}</div></div>`;
+  }
+
+  function teamView() {
+    return heading(escape(currentFlow().name), "", button("flow-picker", "Manage flows", "flow") + button("export", "Export", "download") + button("navigate", "Use this flow", "arrow", "primary", 'data-view="home"')) + `<div class="flow-tabs" role="group" aria-label="Saved flows">${state.flows.filter(flow => !flow.archived).map(flow => `<button data-action="select-flow" data-id="${escape(flow.id)}" class="flow-tab ${flow.id === state.activeFlowId ? "active" : ""}" aria-pressed="${flow.id === state.activeFlowId}">${icon("flow")}<span>${escape(flow.name)}</span><span class="flow-size">${flow.workflow.length}</span></button>`).join("")}${button("new-flow", "New flow", "plus", "text")}</div>` + builderView();
+  }
+
+  function runView() {
     const run = currentRun();
-    const tabs = [["builder", "Workflow", "flow"], ["session", "Run & sessions", "activity"], ["artifacts", "Artifacts", "file"]];
-    return heading("Feature delivery", "A small team. One clear path from idea to verified change.",
-      button("export", "Export", "download", "text") + button("run", engine.isActive() ? "View active run" : "Run demo", "play", "primary")) +
-      `<div class="tabs" role="tablist" aria-label="Workflow views">${tabs.map(([id, label, glyph]) => `<button role="tab" type="button" class="tab ${ui.tab === id ? "active" : ""}" aria-selected="${ui.tab === id}" data-action="tab" data-tab="${id}">${icon(glyph)}${label}${id === "artifacts" && run?.artifacts.length ? `<span class="tab-count">${run.artifacts.length}</span>` : ""}</button>`).join("")}<span class="save-state">${icon("check")}${persistent ? "Saved in this browser" : "Session only"}</span></div>` +
-      (ui.tab === "builder" ? builderView() : ui.tab === "session" ? sessionView(run) : artifactsView(run));
+    return `<div class="run-heading">${button("navigate", "All tasks", "arrow", "text back-button", 'data-view="runs"')}<h1>${run ? escape(run.brief) : "Task"}</h1><p class="subtitle">${icon("folder")}${escape(run?.project?.name || "Sample project")} / ${escape(run?.flow?.name || "Feature delivery")}${run?.project ? button("run-project", run.project.execution.mode === "worktree" ? "Worktree settings" : "Local settings", "sliders", "text small", 'aria-label="View task environment"') : ""}<span class="badge gray">Simulated task</span></p></div>${sessionView(run)}`;
   }
 
   function builderView() {
-    let agent = state.agents.find(item => item.id === ui.selected);
-    if (!agent) { agent = state.agents[0]; ui.selected = agent.id; }
-    return `<div class="builder-grid"><div><section class="panel"><div class="panel-heading"><div class="flow-meta"><h2>${state.workflow.length} steps</h2><span class="divider"></span><span class="meta">Sequential workflow</span></div>${button("library", "Add agent", "plus", "small", "", engine.isActive())}</div><div class="canvas-viewport" aria-label="Agent workflow canvas"><div class="canvas-wrap"><div class="canvas-stage">${canvas()}</div></div></div><div class="canvas-footer"><span class="canvas-tip">${icon("cursor")}${ui.linkFrom ? "Choose an input port to reconnect. Esc cancels." : "Select a step to edit. Connect ports to reorder."}</span><div class="zoom-controls">${button("zoom-out", "", "minus", "text icon-only", 'aria-label="Zoom out"')}<span class="zoom-value">Fit</span>${button("zoom-in", "", "plus", "text icon-only", 'aria-label="Zoom in"')}${button("fit", "", "fit", "text icon-only", 'aria-label="Fit workflow"')}</div></div></section>
-      <section class="panel brief-panel"><div class="brief-top"><h2>${icon("message")}Task brief</h2><span class="repo-chip">${icon("branch")}storefront-lab / demo</span></div><label class="eyebrow" for="task-brief" style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)">Task brief</label><textarea id="task-brief" maxlength="2000" rows="2" placeholder="What should your team build?">${escape(state.brief)}</textarea><p class="brief-hint">Runs use a scripted newsletter example. Your brief and presets are saved for exploration.</p></section>
-      ${activityStrip()}</div><aside class="panel inspector" aria-label="Agent configuration"><div class="inspector-header">${agentIcon(agent)}<div><h2>${escape(agent.name)}</h2><p>Agent preset / ${engine.isActive() ? "Edits apply to the next run" : "Configure this step"}</p></div></div>${agentForm(agent)}</aside></div>`;
+    const agent = state.agents.find(item => item.id === ui.selected);
+    return `<div class="builder-grid ${agent ? "with-inspector" : ""}"><section class="panel canvas-panel"><div class="panel-heading"><div class="flow-meta"><h2>${currentFlow().workflow.length} agents</h2><span class="divider"></span><span class="meta">Run in sequence</span></div>${button("library", "Add agent", "plus", "small", "", engine.isActive())}</div><div class="canvas-viewport" aria-label="Agent workflow canvas"><div class="canvas-wrap"><div class="canvas-stage">${canvas()}</div></div></div><div class="canvas-footer"><span class="canvas-tip">${icon("cursor")}${ui.linkFrom ? "Choose a later input to preview the new order. Esc cancels." : "Select an agent to edit. Connect ports to preview a new order."}</span><div class="zoom-controls">${button("zoom-out", "", "minus", "text icon-only", 'aria-label="Zoom out"')}<span class="zoom-value">Fit</span>${button("zoom-in", "", "plus", "text icon-only", 'aria-label="Zoom in"')}${button("fit", "", "fit", "text icon-only", 'aria-label="Fit workflow"')}</div></div></section>
+      ${agent ? `<aside class="panel inspector" style="${agentStyle(agent)}" aria-label="Agent configuration"><div class="inspector-header">${agentIcon(agent)}<div><h2>${escape(agent.name)}</h2><p>${engine.isActive() ? "Edits apply to the next run" : "Reusable agent preset"}</p></div>${button("close-inspector", "", "close", "text icon-only", 'aria-label="Close agent settings"')}</div>${agentForm(agent)}</aside>` : ""}</div><div class="team-footer"><span>${icon("check")}${persistent ? "Saved in this browser" : "Session only"}</span></div>`;
   }
 
   function position(index) {
@@ -168,36 +281,29 @@
   }
 
   function canvas() {
-    const height = Math.ceil(Math.max(state.workflow.length, 1) / 3) * 230 + 20;
-    const matchingRun = state.run && state.workflow.length === state.run.steps.length &&
-      state.workflow.every((id, index) => id === state.run.steps[index].agent.id) &&
-      (engine.isActive() || (state.brief === state.run.brief && state.workflow.every((id, index) =>
-        JSON.stringify(state.agents.find(agent => agent.id === id)) === JSON.stringify(state.run.steps[index].agent))));
+    const height = Math.ceil(Math.max(currentFlow().workflow.length, 1) / 3) * 230 + 20;
     let lines = "";
     let nodes = "";
-    state.workflow.forEach((id, index) => {
+    currentFlow().workflow.forEach((id, index) => {
       const agent = state.agents.find(item => item.id === id);
       const pos = position(index);
-      const step = matchingRun ? state.run.steps.find(item => item.agent.id === id) : null;
-      const stepStatus = state.run?.status === "paused" && step?.status === "running" ? "paused" : step?.status || "ready";
-      const done = stepStatus === "succeeded";
       const inputSide = index % 3 === 0 && index > 0 ? "top" : pos.forward ? "left" : "right";
       const outputSide = index % 3 === 2 ? "bottom" : pos.forward ? "right" : "left";
-      if (index < state.workflow.length - 1) {
+      if (index < currentFlow().workflow.length - 1) {
         const next = position(index + 1);
         const path = pos.row === next.row ? `M ${pos.forward ? pos.x + 208 : pos.x} ${pos.y + 67} H ${pos.forward ? next.x : next.x + 208}` : `M ${pos.x + 104} ${pos.y + 135} V ${next.y}`;
-        lines += `<path class="flow-line ${done ? "done" : stepStatus === "running" ? "live" : ""}" d="${path}" marker-end="url(#arrowhead)"/>`;
+        lines += `<path class="flow-line" d="${path}" marker-end="url(#arrowhead)"/>`;
       }
-      nodes += `<div class="node ${ui.selected === id ? "selected" : ""} ${done ? "done" : stepStatus}" style="left:${pos.x}px;top:${pos.y}px"><button class="node-body" data-action="select-agent" data-id="${escape(id)}" aria-label="Configure ${escape(agent.name)}" aria-pressed="${ui.selected === id}"><span class="node-top">${agentIcon(agent)}<span><span class="node-name">${escape(agent.name)}</span><span class="node-role">${escape(roles[agent.role].label)}</span></span></span><span class="node-provider">${icon("spark")}${providerName(agent.provider)} <span style="color:#b4bdab">/</span> ${authName(agent.auth)}</span><span class="node-bottom"><span class="node-status">${icon(done ? "check" : stepStatus === "waiting_approval" ? "lock" : "leaf")}${stepStatus === "ready" ? "Fresh session" : statusNames[stepStatus]}</span><span class="node-number">${String(index + 1).padStart(2, "0")}</span></span></button><button class="port ${inputSide}" data-action="connect-to" data-id="${escape(id)}" aria-label="Connect to ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button><button class="port ${outputSide} ${ui.linkFrom === id ? "linking" : ""}" data-action="connect-from" data-id="${escape(id)}" aria-label="Connect from ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button></div>`;
+      nodes += `<div class="node ${ui.selected === id ? "selected" : ""}" style="${agentStyle(agent)};left:${pos.x}px;top:${pos.y}px"><button class="node-body" data-action="select-agent" data-id="${escape(id)}" aria-label="Configure ${escape(agent.name)}" aria-pressed="${ui.selected === id}"><span class="node-top">${agentIcon(agent)}<span class="node-name">${escape(agent.name)}</span></span><span class="node-output">${roleOutputs[agent.role]}</span><span class="node-bottom"><span class="node-status">${providerName(agent.provider)}</span><span class="node-number">${String(index + 1).padStart(2, "0")}</span></span></button><button class="port ${inputSide}" data-action="connect-to" data-id="${escape(id)}" aria-label="Connect to ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button><button class="port ${outputSide} ${ui.linkFrom === id ? "linking" : ""}" data-action="connect-from" data-id="${escape(id)}" aria-label="Connect from ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button></div>`;
     });
-    return `<svg class="connections-svg" viewBox="0 0 820 ${height}" style="height:${height}px" aria-hidden="true"><defs><marker id="arrowhead" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0 0L5 2.5L0 5" fill="none" stroke="#b4c2a6" stroke-width="1"/></marker></defs>${lines}</svg><div class="flow-caption" style="top:27px">${icon("message")} YOUR BRIEF</div>${nodes}${!state.workflow.length ? `<div style="padding:100px 70px"><h2>Your workflow starts here.</h2><p style="margin-top:15px">Add an agent to create the first step.</p></div>` : ""}`;
+    return `<svg class="connections-svg" viewBox="0 0 820 ${height}" style="height:${height}px" aria-hidden="true"><defs><marker id="arrowhead" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0 0L5 2.5L0 5" fill="none" stroke="#2b2238" stroke-width="1"/></marker></defs>${lines}</svg><div class="flow-caption" style="top:27px">${icon("message")} YOUR BRIEF</div>${nodes}${!currentFlow().workflow.length ? `<div style="padding:100px 70px"><h2>No agents yet</h2><p style="margin-top:15px">Add an agent to create the first step.</p></div>` : ""}`;
   }
 
   function sizeCanvas() {
     const viewport = document.querySelector(".canvas-viewport");
     if (!viewport) return;
-    const height = Math.ceil(Math.max(state.workflow.length, 1) / 3) * 230 + 20;
-    const fit = Math.max(.72, Math.min((viewport.clientWidth - 12) / 820, (viewport.clientHeight - 10) / height, 1.12));
+    const height = Math.ceil(Math.max(currentFlow().workflow.length, 1) / 3) * 230 + 20;
+    const fit = Math.max(.95, Math.min((viewport.clientWidth - 12) / 820, (viewport.clientHeight - 10) / height, 1.12));
     const scale = ui.zoom ?? fit;
     const stage = viewport.querySelector(".canvas-stage");
     stage.style.transform = `scale(${scale})`;
@@ -210,37 +316,85 @@
   }
 
   function agentForm(agent, inModal = false) {
-    const index = state.workflow.indexOf(agent.id);
+    const index = currentFlow().workflow.indexOf(agent.id);
     return `<form class="inspector-form" data-form="agent" data-id="${escape(agent.id)}"><div class="field"><label for="agent-name">Name</label><input id="agent-name" name="name" value="${escape(agent.name)}" maxlength="40" required></div>
       <div class="field prompt-field"><label for="agent-prompt">Instructions</label><textarea id="agent-prompt" name="prompt" rows="4" maxlength="2500" required>${escape(agent.prompt)}</textarea></div>
       <div class="field"><label for="agent-connection">AI connection</label><select id="agent-connection" name="connection">${["codex", "claude"].flatMap(provider => ["subscription", "api"].map(auth => `<option value="${provider}|${auth}"${selected(`${agent.provider}|${agent.auth}`, `${provider}|${auth}`)}>${providerName(provider)} / ${authName(auth)}</option>`)).join("")}</select></div>
       <div class="field"><label for="agent-model">Model</label><select id="agent-model" name="model">${models[agent.provider].map(model => `<option${selected(agent.model, model)}>${model}</option>`).join("")}</select><small>Sample model choices for this prototype.</small></div>
-      <div class="field"><span class="field-label">Skills</span><div class="skill-list">${roles[agent.role].skills.concat("Project rules").map(skill => `<button type="button" class="skill-chip" data-action="skill" data-skill="${escape(skill)}" aria-pressed="${agent.skills.includes(skill)}">${escape(skill)}</button>`).join("")}</div></div>
+      <div class="field skill-binding-field">${bindingField(agent.skillBindings || [])}</div>
       <div class="field"><span class="field-label">Allowed tools</span><div class="checks">${[["read", "Read files"], ["write", "Write files"], ["shell", "Shell"], ["browser", "Browser"]].map(([value, label]) => `<label class="check"><input type="checkbox" name="tools" value="${value}"${agent.tools.includes(value) ? " checked" : ""}>${label}</label>`).join("")}</div></div>
       <div class="context-chip">${icon("leaf")}New session per step. Only the brief, decisions, and artifact references carry forward.</div><button type="submit" class="btn primary full">${icon("check")}Save preset</button>
-      ${!inModal && index >= 0 ? `<div class="inspector-bottom"><div class="actions">${button("move-up", "", "up", "small icon-only", 'aria-label="Move step earlier"', index === 0 || engine.isActive())}${button("move-down", "", "down", "small icon-only", 'aria-label="Move step later"', index === state.workflow.length - 1 || engine.isActive())}</div>${button("remove-step", "Remove step", "trash", "text small", "", engine.isActive())}</div>` : ""}</form>`;
-  }
-
-  function activityStrip() {
-    const run = state.run;
-    if (!run) return `<div class="activity-strip">${icon("activity")}<p><strong>Your team is ready.</strong> Run the demo to watch each handoff.</p>${button("help", "Quick tour", "arrow", "text small")}</div>`;
-    return `<div class="activity-strip">${icon(run.status === "waiting_approval" ? "lock" : "activity")}<p><strong>${escape(run.id)} / ${statusNames[run.status]}.</strong> ${run.status === "waiting_approval" ? "Your agent is waiting for permission to continue." : `${run.steps.filter(step => step.status === "succeeded").length} of ${run.steps.length} steps complete.`}</p>${button("live-session", "Open session", "arrow", "text small")}</div>`;
+      ${!inModal && index >= 0 ? `<div class="inspector-bottom"><div class="actions">${button("move-up", "", "up", "small icon-only", 'aria-label="Move step earlier"', index === 0 || engine.isActive())}${button("move-down", "", "down", "small icon-only", 'aria-label="Move step later"', index === currentFlow().workflow.length - 1 || engine.isActive())}</div>${button("remove-step", "Remove step", "trash", "text small", "", engine.isActive())}</div>` : ""}</form>`;
   }
 
   function agentsView() {
-    return heading("Your agents", "Give each role a purpose, a model, and a set of boundaries.", button("new-agent", "New agent", "plus", "primary"), "Reusable presets") +
-      `<div class="content-grid">${state.agents.map(agent => `<section class="panel agent-card"><div class="card-top">${agentIcon(agent, true)}<div><h2>${escape(agent.name)}</h2><p>${providerName(agent.provider)} / ${escape(agent.model)}</p></div></div><p>${escape(roles[agent.role].description)}</p><div class="skill-list">${agent.skills.map(skill => `<span class="skill-chip" aria-pressed="true">${escape(skill)}</span>`).join("")}</div><div class="card-footer">${state.workflow.includes(agent.id) ? '<span class="badge">In workflow</span>' : button("add-existing", "Add to workflow", "plus", "small", `data-id="${escape(agent.id)}"`, engine.isActive())}${button("edit-agent", "Edit preset", "edit", "text small", `data-id="${escape(agent.id)}"`)}</div></section>`).join("")}</div>`;
+    return heading("Your <em>agents</em>", "Give each role a purpose, a model, and a set of boundaries.", button("new-agent", "New agent", "plus", "primary"), "Reusable presets") +
+      `<div class="content-grid">${state.agents.map(agent => `<section class="panel agent-card tilt" style="${agentStyle(agent)}"><div class="card-top">${agentIcon(agent, true)}<div><h2>${escape(agent.name)}</h2><p>${providerName(agent.provider)} / ${escape(agent.model)}</p></div></div><p>${escape(roles[agent.role].description)}</p><div class="skill-list">${agent.skillBindings.length ? agent.skillBindings.map(skill => `<span class="skill-chip" aria-pressed="true">${icon("file")}${escape(skill.name)}</span>`).join("") : '<span class="meta">No skills attached</span>'}</div><div class="card-footer">${currentFlow().workflow.includes(agent.id) ? '<span class="badge">In workflow</span>' : button("add-existing", "Add to workflow", "plus", "small", `data-id="${escape(agent.id)}"`, engine.isActive())}${button("edit-agent", "Edit preset", "edit", "text small", `data-id="${escape(agent.id)}"`)}</div></section>`).join("")}</div>`;
+  }
+
+  function bindingField(bindings) {
+    return `<div class="binding-heading"><span class="field-label">Attached skills <span class="count-label">${bindings.length}</span></span>${button("choose-skills", "Choose skills", "plus", "text small")}</div><input type="hidden" name="skillBindings" value="${escape(JSON.stringify(bindings))}"><div class="bound-skills">${bindings.map(binding => {
+      const source = catalog.skills.find(item => item.id === binding.id);
+      return `<div class="bound-skill">${icon("file")}<div><strong>${escape(binding.name)}</strong><small>${source ? (source.version === binding.version ? (source.requirements.length ? "Review tool setup" : "Available") : "Source changed - update binding") : "Source unavailable"}</small>${source && source.version !== binding.version ? button("update-skill", "Use latest version", "reset", "text small", `data-id="${escape(binding.id)}"`) : ""}</div>${button("remove-skill", "", "close", "text icon-only", `data-id="${escape(binding.id)}" aria-label="Remove ${escape(binding.name)} skill"`)}</div>`;
+    }).join("") || '<div class="binding-empty">Add instructions from your skill library.</div>'}</div><small>Saved with this preset. Each run keeps its own version.</small>`;
+  }
+
+  function filteredSkills(query) {
+    const term = query.trim().toLowerCase();
+    return catalog.skills.filter(skill => [skill.name, skill.description, ...skill.sources].join(" ").toLowerCase().includes(term));
+  }
+
+  function skillRows(query, picker = false) {
+    const skills = filteredSkills(query);
+    return skills.length ? skills.map(skill => {
+      const bound = ui.pickerDraft?.find(item => item.id === skill.id);
+      const uses = state.agents.filter(agent => agent.skillBindings.some(item => item.id === skill.id));
+      return `<article class="skill-row"><span class="skill-file-icon" data-tint="${tintOf(skill.name)}">${icon("file")}</span><div class="skill-row-copy"><div class="skill-row-title"><h3>${escape(skill.name)}</h3><span class="badge ${skill.requirements.length ? "amber" : "gray"}">${skill.requirements.length ? "Review setup" : "Available"}</span></div><p>${escape(skill.description)}</p><div class="skill-row-meta"><span>${escape(skill.sources.join(" / "))}</span>${uses.length ? `<span class="skill-use">${uses.length} ${uses.length === 1 ? "agent" : "agents"}</span>` : ""}</div></div><div class="skill-row-actions">${button("skill-detail", "Details", "", "text small", `data-id="${skill.id}"`)}${picker ? `<label class="skill-select"><input type="checkbox" data-skill-select="${skill.id}" aria-label="Attach ${escape(skill.name)}" ${bound ? "checked" : ""}></label>` : button("assign-skill", "Attach", "plus", "small", `data-id="${skill.id}"`)}</div></article>`;
+    }).join("") : `<div class="empty skill-empty"><h3>${catalog.mode === "loading" ? "Reading your skill folders..." : "No matching skills"}</h3><p>${catalog.mode === "loading" ? "Only skill folders are scanned." : "Try another search or add a skill folder."}</p></div>`;
+  }
+
+  function skillsView() {
+    const local = catalog.mode === "local";
+    const attached = new Set(state.agents.flatMap(agent => agent.skillBindings.map(skill => skill.id))).size;
+    return heading("Your <em>skills</em>", "", button("refresh-skills", "Refresh", "reset", "", "", !local) + button("skill-sources", "Manage sources", "plus", "primary", "", !local), "Skill library") +
+      `<div class="skill-overview"><div><strong>${catalog.skills.length}</strong><span>skills discovered</span></div><div><strong>${catalog.sources.length}</strong><span>folder sources</span></div><div><strong>${attached}</strong><span>skills attached</span></div><span class="catalog-mode"><span class="dot"></span>${local ? "Reading local files" : catalog.mode === "loading" ? "Connecting" : catalog.mode === "error" ? "Local service unavailable" : "Sample catalog"}</span></div>
+      <div class="skills-layout"><section class="panel skill-catalog"><div class="skill-toolbar"><label class="search-box">${icon("search")}<input type="search" id="skill-search" placeholder="Search skills, descriptions, or sources" aria-label="Search skills" value="${escape(ui.skillQuery)}"></label><span class="meta">SKILL.md</span></div><div id="skill-rows">${skillRows(ui.skillQuery)}</div></section><aside class="skill-guide"><span class="guide-icon">${icon("flow")}</span><h2>One library.<br>Different specialists.</h2><p>Attach the same skill to multiple agents. Each agent keeps its own instructions, model, and tool permissions.</p><ol><li><span>01</span><div><strong>Discover</strong><p>Read your existing skill folders.</p></div></li><li><span>02</span><div><strong>Attach</strong><p>Choose the skills each agent needs.</p></div></li><li><span>03</span><div><strong>Keep the version</strong><p>Inspect exactly what a run received.</p></div></li></ol><div class="guide-note">${icon("shield")}<p>Tool hints come from the instructions. They are not a runtime compatibility check. AI execution is still simulated.</p></div>${!local && catalog.mode !== "loading" ? '<div class="guide-note"><p>For local discovery, run <code>python3 prototype/local_server.py</code> and open <code>http://127.0.0.1:4182</code>.</p></div>' : ""}</aside></div>${catalog.errors.length ? `<details class="catalog-errors"><summary>${catalog.errors.length} source ${catalog.errors.length === 1 ? "warning" : "warnings"}</summary>${catalog.errors.map(error => `<p>${escape(error.name || error.source || "Local service")}: ${escape(error.message)}</p>`).join("")}</details>` : ""}`;
+  }
+
+  function skillPicker(form, query = "") {
+    if (form) {
+      ui.pickerTarget = form;
+      ui.pickerDraft = JSON.parse(form.elements.skillBindings.value);
+      ui.pickerQuery = query;
+    }
+    showModal("Choose this agent's skills", `<p>Select instructions to attach. Review tool setup before using a real runtime.</p><label class="search-box picker-search"><input id="picker-search" type="search" aria-label="Search skills to attach" placeholder="Search your skill library" value="${escape(ui.pickerQuery)}"></label><div id="picker-rows" class="picker-rows">${skillRows(ui.pickerQuery, true)}</div>`, `<span id="selection-count" class="meta">${ui.pickerDraft.length} selected</span>${button("close-modal", "Cancel", "")}${button("apply-skills", "Use selected skills", "check", "primary")}`, true, catalog.mode === "local" ? "Local skill library" : "Sample skill library");
+  }
+
+  async function skillDetail(id) {
+    try {
+      const skill = await catalog.detail(id);
+      showSkillFiles(skill.name, skill, ui.pickerDraft ? button("back-skills", "Back to selection", "arrow", "back-button") : "");
+    } catch (error) { toast(error.message); }
+  }
+
+  function showSkillFiles(name, skill, footer = "") {
+    showModal(escape(name), `<div class="skill-detail-meta"><span class="badge gray">${skill.sample ? "Sample" : "Read-only skill content"}</span><code>${escape(skill.version.slice(0, 12))}</code></div>${skill.path ? `<p class="source-path">${escape(skill.path)}</p>` : ""}${skill.requirements ? `<p class="skill-requirements"><strong>Tool hints:</strong> ${escape(skill.requirements.join(", ") || "No known tool hints detected")}<br><small>Review the instructions. Other tools or services may be required.</small></p>` : ""}<details class="file-manifest"><summary>${skill.files.length} included ${skill.files.length === 1 ? "file" : "files"}</summary>${skill.files.map(file => `<div>${icon("file")}<code>${escape(file.path)}</code></div>`).join("")}</details><p class="meta">Text references, scripts, and assets stay with the snapshot. Environment files, binaries, and links outside the skill folder are excluded. Scripts are never executed.</p><pre class="skill-source">${escape(skill.files.find(file => file.path === "SKILL.md")?.content || "No SKILL.md in this snapshot.")}</pre>`, footer, true, "Skill instructions");
+  }
+
+  function sourcesModal() {
+    ui.pickerDraft = null;
+    showModal("Local skill folders", `<p>Use one folder per line. A folder can contain SKILL.md directly, or contain one folder per skill. Links to the same skill are merged.</p><form data-form="skill-sources"><label class="field-label" for="skill-roots">Folder paths</label><textarea id="skill-roots" name="roots" rows="5" spellcheck="false">${escape(catalog.roots.join("\n"))}</textarea><div class="source-list">${catalog.sources.map(source => `<div><code>${escape(source.label)}</code><span class="badge ${source.status === "available" ? "gray" : "amber"}">${source.status === "available" ? `${source.count} found` : "Unavailable"}</span></div>`).join("")}</div><p class="meta">Folders stay on this computer. This scans instructions and supporting text files, without running scripts.</p><button type="submit" class="btn primary full">Scan folders</button></form>`, "", true, "Skill sources");
   }
 
   function connectionsView() {
-    return heading("Connect your AI", "Use an API key or your own subscription through an official local runtime.", button("connect", "Add connection", "plus", "primary"), "Bring your own account") +
+    return heading("Connect your <em>AI</em>","Use an API key or your own subscription through an official local runtime.", button("connect", "Add connection", "plus", "primary"), "Bring your own account") +
       `<div class="info-banner">${icon("shield")}<span>This prototype uses demo accounts. It never asks for real keys, opens a login page, or makes paid requests. Connection states below are simulated.</span></div><div class="connection-grid">${state.connections.map(connection => `<section class="panel connection-card"><div class="card-top"><div class="actions"><div class="provider-logo ${connection.provider}">${connection.provider === "codex" ? "&lt;/&gt;" : "✳"}</div><div><h2>${providerName(connection.provider)}</h2><p>${connection.provider === "codex" ? "OpenAI" : "Anthropic"} / ${authName(connection.auth)}</p></div></div><span class="badge ${connection.connected ? "" : "gray"}">${connection.connected ? "Demo connected" : "Disconnected"}</span></div><dl class="definition-list"><dt>Authentication</dt><dd>${connection.auth === "api" ? "API key (demo placeholder)" : "Official CLI sign-in"}</dd><dt>Billing mode</dt><dd>${connection.auth === "api" ? "API usage" : "Your subscription"}</dd><dt>Automatic API fallback</dt><dd>Off</dd><dt>Actual requests</dt><dd>0</dd></dl><div class="card-footer">${button("test-connection", "Test demo connection", "activity", "small", `data-id="${connection.id}"`, !connection.connected)}${button("toggle-connection", connection.connected ? "Disconnect" : "Reconnect demo", connection.connected ? "plug" : "plus", "text small", `data-id="${connection.id}"`)}</div></section>`).join("")}</div>`;
   }
 
   function runsView() {
     const runs = [state.run, ...state.history].filter(Boolean);
-    return heading("Run history", "Every session, decision, and artifact stays connected to its run.", button("navigate", "Open workflow", "arrow", "primary", 'data-view="workflow"'), "A record of the work") +
-      (runs.length ? `<section class="panel"><table class="history-table"><thead><tr><th>RUN / TASK</th><th>STATUS</th><th>ARTIFACTS</th><th></th></tr></thead><tbody>${runs.map(run => `<tr><td>${escape(run.id)}<small>${escape(run.brief.slice(0, 75))}${run.brief.length > 75 ? "..." : ""}</small></td><td>${statusBadge(run.status)}</td><td>${run.artifacts.length} files</td><td>${button("open-run", "Inspect", "arrow", "text small", `data-id="${run.id}"`)}</td></tr>`).join("")}</tbody></table></section>` : emptyState("clock", "Your first run starts here", "Run the sample workflow to see conversations, approvals, and artifacts collected in one place.", button("run", "Run demo", "play", "primary")));
+    return heading("Your <em>tasks</em>","Pick up where you left off. Every conversation and output stays with the task.", button("navigate", "New task", "plus", "primary", 'data-view="home"'), "Your workspace") +
+      (runs.length ? `<section class="panel"><table class="history-table"><thead><tr><th>TASK</th><th>STATUS</th><th>OUTPUTS</th><th></th></tr></thead><tbody>${runs.map(run => `<tr><td><strong>${escape(run.brief)}</strong><small>${escape(run.id)} / ${escape(run.flow?.name || "Feature delivery")}</small></td><td>${statusBadge(run.status)}</td><td>${run.artifacts.length} files</td><td>${button("open-run", "Open task", "arrow", "text small", `data-id="${run.id}"`)}</td></tr>`).join("")}</tbody></table></section>` : emptyState("clock", "Your first task starts here", "Describe a task and choose your team. Follow its progress, approvals, and outputs here.", button("navigate", "New task", "plus", "primary", 'data-view="home"')));
   }
 
   function emptyState(iconName, title, description, action = "") {
@@ -253,48 +407,194 @@
     const step = run.steps[ui.step];
     const isCurrent = run.id === state.run?.id;
     const controls = isCurrent ? (run.status === "running" ? button("pause", "Pause", "pause") : run.status === "paused" ? button("resume", "Resume", "play", "primary") : "") + (["running", "paused", "waiting_approval"].includes(run.status) ? button("cancel", "Cancel", "stop", "danger") : button("run", "Run again", "play", "primary")) : button("live-session", "Latest run", "arrow");
-    const approval = isCurrent && run.status === "waiting_approval" ? `<div class="approval"><h3>${escape(run.steps[run.index].agent.name)} needs your approval</h3><p>Allow simulated file changes in <strong>storefront-lab / demo worktree</strong> for this run. Your real files stay untouched.</p><div class="actions">${button("approve", "Approve demo changes", "check", "primary small")}${button("cancel", "Reject & cancel", "close", "small")}</div></div>` : "";
-    return `<section class="panel run-bar"><div><h2>${escape(run.id)} <span class="badge gray">Simulation</span></h2><p class="meta">${escape(run.note)}</p><div class="run-progress" aria-label="${run.steps.filter(item => item.status === "succeeded").length} of ${run.steps.length} steps complete">${run.steps.map(item => `<span class="${item.status === "succeeded" ? "done" : item.status}"></span>`).join("")}</div></div><div class="actions">${statusBadge(run.status)}${controls}</div></section>
-      <section class="panel run-grid"><aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Agent sessions</div>${run.steps.map((item, index) => `<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent)}<span><strong>${escape(item.agent.name)}</strong><small>${statusNames[item.status]}</small></span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}</aside><div class="session"><div class="session-head"><div><h2>${escape(step.agent.name)} <span class="session-id">/ ${escape(step.sessionId)}</span></h2><p>${escape(step.agent.model)} / ${authName(step.agent.auth)} / fresh context</p></div><span class="badge gray">${step.receivedArtifacts.length} inputs</span></div><div class="session-tabs" role="tablist" aria-label="Session content">${[["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"]].map(([id, label]) => `<button class="tab ${ui.sessionTab === id ? "active" : ""}" role="tab" aria-selected="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${label}</button>`).join("")}</div><div class="session-content">${approval}${ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div></div></section>`;
+    const activeStep = run.steps[Math.min(run.index, run.steps.length - 1)];
+    const completed = run.steps.filter(item => item.status === "succeeded").length;
+    const nextAction = run.status === "waiting_approval" ? `${escape(activeStep.agent.name)} is waiting for you` : run.status === "running" ? `${escape(activeStep.agent.name)} is working` : run.status === "succeeded" ? "Your team has finished. Review the outputs." : run.status === "paused" ? "Task paused. Resume when you are ready." : run.status === "failed" ? "This task needs attention" : "Task cancelled. Your outputs are still here.";
+    const detail = run.status === "waiting_approval" ? "Review the plan and QA sheet, then allow simulated file changes for this run." : run.status === "running" ? `Step ${Math.min(run.index + 1, run.steps.length)} of ${run.steps.length} / ${roleOutputs[activeStep.agent.role]}` : run.status === "succeeded" ? `${run.artifacts.length} sample outputs, with the conversations that produced them.` : escape(run.note);
+    const approvalActions = isCurrent && run.status === "waiting_approval" ? button("approve", "Approve demo changes", "check", "primary") + button("cancel", "Reject & cancel", "close", "text") : controls;
+    const followControl = isCurrent && engine.isActive() ? (ui.followRun ? '<span class="badge">Following live</span>' : button("follow-run", "Follow live", "activity", "small")) : `<span class="badge gray">Session ${ui.step + 1}</span>`;
+    const mood = item => item.status === "running" ? "running" : item.status === "waiting_approval" ? "waiting" : "";
+    const actionMark = ["running", "waiting_approval", "paused"].includes(run.status) ? agentIcon(activeStep.agent, true, mood(activeStep)) : icon(run.status === "succeeded" ? "check" : run.status === "failed" ? "alert" : "activity");
+    return `<section class="next-action ${run.status === "waiting_approval" ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${nextAction}</h2><p>${detail}</p></div><div class="actions">${approvalActions}</div></section>
+      <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Conversations and outputs are saved together</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => `<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
+      <section class="panel run-grid"><aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => `<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${statusNames[item.status]}</small></span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.agent.model)} / ${authName(step.agent.auth)}</p></div></div>${followControl}</div><nav class="session-tabs" aria-label="Session content">${[["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"]].map(([id, label]) => `<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${label}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div><div class="session-foot">${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? "artifact" : "artifacts"}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${evidenceView(run)}</section>`;
   }
 
   function messagesView(step) {
     const messages = step.messages.filter(message => ui.sessionTab === "conversation" ? message.type !== "tool" : message.type === "tool");
     if (!messages.length) return `<div class="empty" style="padding:45px 15px"><h2 style="font-size:15px">${step.status === "queued" ? "This session has not started yet" : "Waiting for the next event"}</h2><p>${ui.sessionTab === "tools" ? "Simulated tool calls will appear here when this step uses a tool." : "The agent will receive a fresh session and references to the previous outputs."}</p></div>`;
-    return messages.map(message => `<div class="message ${message.type}"><div class="message-label"><span>${message.type === "assistant" ? escape(step.agent.name) : message.type === "tool" ? "Simulated tool call" : "Session event"}</span><span>${new Date(message.time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span></div><div class="message-text">${escape(message.text)}</div></div>`).join("");
+    const seen = seenMessages.stepId === step.id ? seenMessages.count : step.messages.length;
+    seenMessages = { stepId: step.id, count: step.messages.length };
+    const typing = ui.sessionTab === "conversation" && step.status === "running" ? '<div class="message typing" aria-hidden="true"><span></span><span></span><span></span></div>' : "";
+    return messages.map(message => `<div class="message ${message.type}${step.messages.indexOf(message) >= seen ? " fresh" : ""}"><div class="message-label"><span>${message.type === "assistant" ? escape(step.agent.name) : message.type === "tool" ? "Simulated tool call" : "Session event"}</span><span>${new Date(message.time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span></div><div class="message-text">${escape(message.text)}</div></div>`).join("") + typing;
   }
 
   function handoffView(step, run) {
     const outputs = run.artifacts.filter(artifact => artifact.stepId === step.id);
-    return `<div class="handoff-card"><h3>A small handoff, with the full evidence nearby.</h3><p><strong>Goal:</strong> ${escape(run.brief)}<br><strong>Context:</strong> a new session, not the previous conversation.<br><strong>Inputs:</strong> ${step.receivedArtifacts.length ? step.receivedArtifacts.map(item => escape(item.name)).join(", ") : "The task brief and project rules."}<br><strong>Code reference:</strong> demo-diff-v1 (sample)<br><strong>Instructions snapshot:</strong> ${escape(step.agent.prompt)}</p></div><div style="margin-top:20px"><p class="eyebrow" style="margin-bottom:12px">Outputs from this step</p>${outputs.length ? `<div class="artifact-list">${outputs.map(artifactRow).join("")}</div>` : '<p class="meta">Artifacts appear after this step completes.</p>'}</div>`;
+    return `<div class="handoff-card"><h3>A small handoff, with the full evidence nearby.</h3><p><strong>Goal:</strong> ${escape(run.brief)}<br><strong>Context:</strong> a new session, not the previous conversation.<br><strong>Inputs:</strong> ${step.receivedArtifacts.length ? step.receivedArtifacts.map(item => escape(item.name)).join(", ") : "The task brief and project rules."}<br><strong>Code reference:</strong> demo-diff-v1 (sample)<br><strong>Instructions snapshot:</strong> ${escape(step.agent.prompt)}</p></div><div class="snapshot-list"><h3>Skill versions for this run</h3>${(step.agent.skillSnapshots || []).map(binding => `<button class="snapshot-row" data-action="skill-snapshot" data-id="${escape(binding.id)}">${icon("file")}<span><strong>${escape(binding.name)}</strong><small>${escape(binding.version.slice(0, 12))} / ${binding.fileCount} ${binding.fileCount === 1 ? "file" : "files"}</small></span>${icon("chevron")}</button>`).join("") || '<p class="meta">No skills attached when this run started.</p>'}</div><div style="margin-top:20px"><p class="eyebrow" style="margin-bottom:12px">Outputs from this step</p>${outputs.length ? `<div class="artifact-list">${outputs.map(artifactRow).join("")}</div>` : '<p class="meta">Artifacts appear after this step completes.</p>'}</div>`;
   }
 
   function artifactRow(artifact) {
-    return `<button class="artifact-row" data-action="artifact" data-id="${escape(artifact.id)}">${icon(artifact.type === "Code diff" ? "code" : "file")}<span><strong>${escape(artifact.name)}</strong><small>${escape(artifact.agent)} / sample artifact</small></span><span class="badge gray">${escape(artifact.type)}</span>${icon("chevron")}</button>`;
+    return `<button class="artifact-row" data-action="artifact" data-id="${escape(artifact.id)}" data-tint="${tintOf(artifact.type)}">${icon(artifact.type === "Code diff" ? "code" : "file")}<span><strong>${escape(artifact.name)}</strong><small>${escape(artifact.agent)} / sample artifact</small></span><span class="badge gray">${escape(artifact.type)}</span>${icon("chevron")}</button>`;
   }
 
-  function artifactsView(run) {
-    if (!run?.artifacts.length) return emptyState("file", "Evidence, not just a finish line", "The plan, QA sheet, diff, review, and test reports will appear here as your demo run progresses.", run ? button("live-session", "Watch the run", "activity", "primary") : button("run", "Run demo", "play", "primary"));
-    return `<div class="info-banner">${icon("file")}<span><strong>${escape(run.id)}</strong> / ${run.artifacts.length} sample artifacts. Open any file to inspect or download it. These outputs are scripted examples.</span></div><div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>`;
+  function evidenceView(run) {
+    const artifact = run.artifacts.find(item => item.id === ui.artifactId);
+    return `<aside class="evidence-panel" aria-label="Task outputs"><div class="panel-heading"><h2>${icon("file")}Outputs <span class="badge gray">${run.artifacts.length}</span></h2></div><div class="evidence-body">${artifact ? `<div class="evidence-navigation">${button("all-outputs", "All outputs", "arrow", "text small back-button")}${button("download-artifact", "", "download", "text icon-only", `data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${escape(artifact.type)}</p><pre class="artifact-preview">${artifact.content.split("\n").map(line => `<span class="${line.startsWith("+") ? "diff-add" : line.startsWith("-") ? "diff-remove" : ""}">${escape(line)}</span>`).join("\n")}</pre>` : `<div class="evidence-intro"><h3>See the work behind the status.</h3><p>Plans, changes, and QA evidence appear here as each agent finishes.</p></div>${run.artifacts.length ? `<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : `<div class="expected-output">${icon("file")}<span>Waiting for the first output<small>${escape(run.steps[0].agent.name)} will hand over ${roleOutputs[run.steps[0].agent.role].toLowerCase()}.</small></span></div>`}`}</div></aside>`;
   }
 
   function defaultsView() {
-    return heading("Good habits, built in", "Set the boundaries once. Every agent starts with them.", button("help", "About this demo", "help"), "Workspace defaults") +
+    return heading("<em>Defaults</em>", "", button("help", "About this demo", "help"), "Workspace defaults") +
       `<section class="panel settings-panel"><div class="setting-row"><div><h2>Fresh session at each handoff</h2><p>Pass the goal, decisions, and artifact references. Keep the original conversation available for inspection.</p></div><span class="badge">Always on</span></div><div class="setting-row"><div><h2>Approval before file changes</h2><p>Pause the demo before the first write-enabled agent. Your choice applies to the next run.</p></div><button class="toggle" role="switch" aria-label="Approval before file changes" aria-checked="${state.approvalRequired}" data-action="toggle-approval"></button></div><div class="setting-row"><div><h2>No automatic paid fallback</h2><p>A subscription limit should pause the task. Switching to API billing is a separate, explicit choice.</p></div><span class="badge">Always on</span></div><div class="setting-row"><div><h2>Keep the evidence</h2><p>Plans, QA cases, diffs, and test results stay attached to the run and its code reference.</p></div><span class="badge">Always on</span></div><div class="setting-row"><div><h2>One active demo at a time</h2><p>Pause, resume, or cancel an active run before starting another. Preset edits never change an active run's snapshot.</p></div><span class="badge gray">1 run</span></div><div class="setting-row"><div><h2>Browser storage</h2><p>Demo presets and recent runs are saved in this browser. Real keys are never collected. Reset only removes this prototype's data.</p></div>${button("reset", "Reset demo", "reset", "small")}</div></section>`;
   }
 
   function showModal(title, body, footer = "", wide = false, eyebrow = "Agent Studio") {
     clearTimeout(connectionTimer);
-    lastFocused = document.activeElement;
+    if (!modal.open) lastFocused = document.activeElement;
     modal.className = wide ? "wide" : "";
-    modal.innerHTML = `<div class="modal-head"><div><div class="eyebrow">${eyebrow}</div><h2 id="modal-title">${title}</h2></div>${button("close-modal", "", "close", "text icon-only", 'aria-label="Close dialog"')}</div><div class="modal-body">${body}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}`;
+    modal.innerHTML = `<div class="modal-head"><div>${eyebrow ? `<div class="eyebrow">${eyebrow}</div>` : ""}<h2 id="modal-title">${title}</h2></div>${button("close-modal", "", "close", "text icon-only", 'aria-label="Close dialog"')}</div><div class="modal-body">${body}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}`;
     if (!modal.open) modal.showModal();
+    if (!modal.contains(document.activeElement)) modal.querySelector("button, input, select, textarea")?.focus();
   }
 
   function closeModal() {
     clearTimeout(connectionTimer);
+    ui.folderRequest = null;
     modal.close();
+    ui.pickerDraft = null; ui.pickerTarget = null;
     if (lastFocused?.isConnected) lastFocused.focus();
+  }
+
+  function activeProject() {
+    return state.projects.find(project => project.id === state.activeProjectId);
+  }
+
+  function selectFlow(id, view = "team") {
+    if (!state.flows.some(flow => flow.id === id && !flow.archived)) return;
+    state.activeFlowId = id; ui.view = view; ui.selected = null; ui.linkFrom = null; ui.pendingOrder = null; ui.zoom = null;
+    persist(); if (modal.open) closeModal(); render(); app.querySelector(".main").focus({ preventScroll: true });
+  }
+
+  function flowPicker() {
+    const flows = state.flows.filter(flow => !flow.archived);
+    const archived = state.flows.filter(flow => flow.archived);
+    showModal("Flows", `<div class="flow-list">${flows.map(flow => `<article class="flow-list-item"><button class="flow-choice" data-action="select-flow" data-id="${escape(flow.id)}" data-view="${ui.view === "home" ? "home" : "team"}">${icon("flow")}<span><strong>${escape(flow.name)}</strong><span>${flow.workflow.length} agents</span></span>${flow.id === state.activeFlowId ? icon("check") : ""}</button><div class="flow-item-actions">${button("rename-flow", "", "edit", "text icon-only", `data-id="${escape(flow.id)}" aria-label="Rename ${escape(flow.name)}" title="Rename flow"`)}${button("duplicate-flow", "", "copy", "text icon-only", `data-id="${escape(flow.id)}" aria-label="Duplicate ${escape(flow.name)}" title="Duplicate flow"`)}${button("archive-flow", "", "archive", "text icon-only", `data-id="${escape(flow.id)}" aria-label="Archive ${escape(flow.name)}" title="Archive flow"`, flows.length === 1)}</div></article>`).join("")}</div>${archived.length ? `<details class="archived-flows"><summary>Archived (${archived.length})</summary>${archived.map(flow => `<div><span>${escape(flow.name)}</span>${button("restore-flow", "Restore", "reset", "text", `data-id="${escape(flow.id)}"`)}</div>`).join("")}</details>` : ""}<p class="flow-sharing-note">Flows save their own order. Agent presets are shared.</p>`, button("navigate", "Edit selected flow", "edit", "", 'data-view="team"') + button("new-flow", "New flow", "plus", "primary"), false, "");
+  }
+
+  function flowForm(mode = "create", id = "") {
+    const source = state.flows.find(flow => flow.id === id);
+    const name = mode === "duplicate" ? `${source.name} copy` : source?.name || "";
+    const title = mode === "rename" ? "Rename flow" : mode === "duplicate" ? "Duplicate flow" : "New flow";
+    showModal(title, `<form id="flow-form" data-form="flow" data-mode="${mode}" data-id="${escape(id)}"><div class="field"><label for="flow-name">Flow name</label><input id="flow-name" name="name" value="${escape(name)}" placeholder="e.g. Backend delivery" maxlength="60" required></div><p class="form-error" role="alert" hidden></p></form>`, button("flow-picker", "Back", "") + `<button type="submit" form="flow-form" class="btn primary">${mode === "rename" ? "Save name" : "Create flow"}</button>`, false, "");
+    document.getElementById("flow-name").focus();
+  }
+
+  function saveFlow(form) {
+    const name = new FormData(form).get("name").trim();
+    const { mode, id } = form.dataset;
+    const source = state.flows.find(flow => flow.id === id);
+    const errorBox = form.querySelector(".form-error");
+    if (!name || state.flows.some(flow => flow.name.toLowerCase() === name.toLowerCase() && (mode !== "rename" || flow.id !== id))) {
+      errorBox.textContent = name ? "A flow with this name already exists." : "Enter a flow name."; errorBox.hidden = false; return;
+    }
+    let flow;
+    if (mode === "rename") { source.name = name; flow = source; }
+    else { flow = { id: crypto.randomUUID(), name, workflow: mode === "duplicate" ? [...source.workflow] : [], archived: false }; state.flows.push(flow); }
+    selectFlow(flow.id);
+  }
+
+  function projectPicker() {
+    showModal("Projects", `<div class="project-list">${state.projects.map(project => `<button class="project-choice" data-action="select-project" data-id="${escape(project.id)}">${icon("folder")}<span><strong>${escape(project.name)}</strong><span>${escape(project.path)}</span></span>${project.id === state.activeProjectId ? icon("check") : ""}</button>`).join("") || '<p class="project-empty">No projects yet.</p>'}</div>`, button("new-project", "Create project", "plus", "primary"), false, "");
+  }
+
+  function projectModal() {
+    ui.folderRequest = null;
+    if (catalog.mode !== "local") {
+      showModal("Local preview required", '<p>Run the local server to select folders and read Git branches.</p><pre class="project-command">python3 prototype/local_server.py --port 4184</pre>', button("close-modal", "Close", ""), false, "");
+      return;
+    }
+    const draft = ui.projectDraft;
+    showModal("Create project", `<form id="project-form" data-form="project"><div class="field"><label for="project-name">Project name</label><input id="project-name" name="name" value="${escape(draft.name)}" maxlength="60" placeholder="Project name" required></div><div class="field"><label for="project-path">Source folder</label><div class="source-folder"><div class="folder-input-row">${icon("folder")}<input id="project-path" name="path" value="${escape(draft.path)}" placeholder="/path/to/project" required></div>${button("browse-folders", draft.path ? "Change folder" : "Choose folder", "plus", "")}</div></div><p id="project-error" class="form-error" role="alert" hidden></p></form>`, button("close-modal", "Cancel", "") + '<button type="submit" form="project-form" class="btn primary">Create project</button>', false, "");
+    document.getElementById("project-name").focus();
+  }
+
+  async function browseFolders(path) {
+    const request = Symbol();
+    ui.folderRequest = request; ui.folderListing = null;
+    showModal("Choose source folder", `<div class="folder-browser"><form class="folder-path-form" data-form="folder-path"><label class="sr-only" for="folder-path">Folder path</label><input id="folder-path" name="path" value="${escape(path || "~")}" required><button class="btn" type="submit">Open</button></form><div id="folder-list" class="folder-list" aria-live="polite"><p>Loading folders...</p></div></div>`, button("back-project", "Back", "") + button("choose-folder", "Use this folder", "check", "primary", "", true), false, "");
+    try {
+      const listing = await catalog.request("/api/folders", { path: path || "~" });
+      if (ui.folderRequest !== request || !modal.open) return;
+      ui.folderListing = listing;
+      document.getElementById("folder-path").value = listing.path;
+      document.getElementById("folder-list").innerHTML = `${listing.parent ? `<button class="folder-row parent-folder" data-action="open-folder" data-path="${escape(listing.parent)}">${icon("up")}<span>Parent folder</span></button>` : ""}${listing.folders.map(folder => `<button class="folder-row" data-action="open-folder" data-path="${escape(folder.path)}">${icon("folder")}<span>${escape(folder.name)}</span>${icon("chevron")}</button>`).join("") || '<p>No subfolders.</p>'}`;
+      modal.querySelector('[data-action="choose-folder"]').disabled = false;
+    } catch (error) {
+      if (ui.folderRequest === request && modal.open) document.getElementById("folder-list").innerHTML = `<p class="form-error" role="alert">${escape(error.message)}</p>`;
+    }
+  }
+
+  async function saveProject(form) {
+    const values = new FormData(form);
+    const name = values.get("name").trim(), path = values.get("path").trim();
+    const errorBox = form.querySelector(".form-error");
+    const submit = modal.querySelector('[type="submit"][form="project-form"]');
+    if (!name) { errorBox.textContent = "Enter a project name."; errorBox.hidden = false; return; }
+    submit.disabled = true; errorBox.hidden = true;
+    try {
+      const details = await catalog.request("/api/project", { path });
+      if (!form.isConnected || !modal.open) return;
+      if (state.projects.some(project => project.path === details.path)) throw new Error("This folder is already registered. Select it from Projects.");
+      const project = { ...details, id: crypto.randomUUID(), name, execution: { mode: "local", baseRef: details.defaultRef, branchName: "" } };
+      state.projects.push(project); state.activeProjectId = project.id;
+      ui.view = "home"; persist(); closeModal(); render();
+      document.getElementById("task-brief").focus();
+    } catch (error) {
+      if (form.isConnected) { errorBox.textContent = error.message; errorBox.hidden = false; submit.disabled = false; }
+    }
+  }
+
+  async function projectSettings() {
+    const project = activeProject();
+    if (!project) return projectPicker();
+    if (catalog.mode !== "local") return toast("Open the local preview server to inspect this project.");
+    showModal("Local environment", '<div id="project-settings-loading" class="project-empty">Reading project...</div>', "", false, "");
+    const loading = document.getElementById("project-settings-loading");
+    try {
+      const details = await catalog.request("/api/project", { path: project.path });
+      if (!loading.isConnected || !modal.open) return;
+      Object.assign(project, details); persist();
+      const execution = project.execution;
+      const worktree = execution.mode === "worktree" && !!details.head;
+      const ref = execution.baseRef || details.defaultRef;
+      const stale = worktree && !details.branches.some(branch => branch.ref === ref);
+      showModal("Local environment", `<form id="project-settings-form" data-form="project-settings" data-id="${escape(project.id)}"><div class="environment-project">${icon("folder")}<strong>${escape(project.name)}</strong><span>${escape(project.path)}</span></div><label class="worktree-option" for="new-worktree"><span>${icon("branch")}New worktree</span><input type="checkbox" id="new-worktree" name="worktree" ${worktree ? "checked" : ""} ${details.head ? "" : "disabled"}></label>${!details.head ? '<p class="environment-note">Worktrees require a Git repository with at least one commit.</p>' : ""}<div id="worktree-fields" ${worktree ? "" : "hidden"}><div class="field"><label for="base-branch">Base branch</label><select id="base-branch" name="baseRef">${stale ? '<option value="">Choose a branch</option>' : ""}${details.branches.map(branch => `<option value="${escape(branch.ref)}"${selected(ref, branch.ref)}>${escape(branch.name)}</option>`).join("")}</select></div><div class="field"><label for="worktree-branch">New branch name</label><input id="worktree-branch" name="branchName" maxlength="200" value="${escape(execution.branchName || "")}" placeholder="Automatic"></div></div><div id="local-branch" class="environment-current" ${worktree ? "hidden" : ""}>${icon("branch")}<span>${escape(details.currentBranch || (details.head ? "Detached HEAD" : "No Git branch"))}</span></div><p class="environment-note">Preview only. No checkout or worktree is created.</p><p class="form-error" role="alert" hidden></p></form>`, button("close-modal", "Cancel", "") + '<button type="submit" form="project-settings-form" class="btn primary">Save settings</button>', false, "");
+    } catch (error) {
+      if (loading.isConnected && modal.open) { loading.className = "form-error"; loading.setAttribute("role", "alert"); loading.textContent = error.message; }
+    }
+  }
+
+  async function saveProjectSettings(form) {
+    const project = state.projects.find(item => item.id === form.dataset.id);
+    const values = new FormData(form);
+    const execution = { mode: values.has("worktree") ? "worktree" : "local", baseRef: values.get("baseRef"), branchName: values.get("branchName").trim() };
+    const errorBox = form.querySelector(".form-error");
+    const submit = modal.querySelector('[type="submit"][form="project-settings-form"]');
+    submit.disabled = true; errorBox.hidden = true;
+    try {
+      const details = await catalog.request("/api/project", { path: project.path, execution });
+      if (!form.isConnected || !modal.open) return;
+      Object.assign(project, details, { execution }); persist(); closeModal(); render(true);
+    } catch (error) {
+      if (form.isConnected) { errorBox.textContent = error.message; errorBox.hidden = false; submit.disabled = false; }
+    }
+  }
+
+  function runProjectDetails() {
+    const project = currentRun()?.project;
+    if (!project) return;
+    const execution = project.execution;
+    showModal("Task environment", `<dl class="environment-summary"><dt>Project</dt><dd>${escape(project.name)}</dd><dt>Source folder</dt><dd>${escape(project.path)}</dd><dt>Mode</dt><dd>${execution.mode === "worktree" ? "New worktree" : "Local"}</dd><dt>${execution.mode === "worktree" ? "Base branch" : "Branch"}</dt><dd>${escape(execution.mode === "worktree" ? project.branches.find(branch => branch.ref === execution.baseRef)?.name || execution.baseRef : project.currentBranch || "None")}</dd>${execution.mode === "worktree" ? `<dt>New branch</dt><dd>${escape(execution.branchName || "Automatic")}</dd>` : ""}</dl><p class="environment-note">Settings captured at task start. Execution is simulated.</p>`, button("close-modal", "Close", ""), false, "");
   }
 
   function connectionModal() {
@@ -303,42 +603,60 @@
 
   function libraryModal() {
     if (engine.isActive()) return toast("Finish or cancel the current run before changing its workflow.");
-    const available = state.agents.filter(agent => !state.workflow.includes(agent.id));
+    const available = state.agents.filter(agent => !currentFlow().workflow.includes(agent.id));
     showModal("Add a step", `<p>Choose a preset. New steps are added to the end of your sequential workflow.</p><div class="library-list">${available.map(agent => `<button class="library-item" data-action="add-existing" data-id="${escape(agent.id)}">${agentIcon(agent)}<span><strong>${escape(agent.name)}</strong><small>${providerName(agent.provider)} / ${escape(agent.model)}</small></span>${icon("plus")}</button>`).join("")}${!available.length ? '<p class="meta" style="padding:15px 0">All your current presets are already in this workflow.</p>' : ""}</div>`, button("new-agent", "Create a new agent", "plus", "primary"));
   }
 
   function newAgentModal() {
-    showModal("Make it your own", `<p>Create a preset, then tune its instructions, model, skills, and permissions.</p><form id="new-agent-form" data-form="new-agent"><div class="field"><label for="new-agent-name">Agent name</label><input id="new-agent-name" name="name" maxlength="40" placeholder="e.g. Data architect" required></div><div class="field"><label for="new-agent-role">Start from a role</label><select id="new-agent-role" name="role">${Object.entries(roles).map(([key, role]) => `<option value="${key}">${role.label}</option>`).join("")}</select></div></form>`, button("close-modal", "Cancel", "") + '<button type="submit" form="new-agent-form" class="btn primary">Create preset</button>');
+    showModal("Create agent", `<p>Create a preset, then tune its instructions, model, skills, and permissions.</p><form id="new-agent-form" data-form="new-agent"><div class="field"><label for="new-agent-name">Agent name</label><input id="new-agent-name" name="name" maxlength="40" placeholder="e.g. Data architect" required></div><div class="field"><label for="new-agent-role">Start from a role</label><select id="new-agent-role" name="role">${Object.entries(roles).map(([key, role]) => `<option value="${key}">${role.label}</option>`).join("")}</select></div></form>`, button("close-modal", "Cancel", "") + '<button type="submit" form="new-agent-form" class="btn primary">Create preset</button>');
   }
 
   function helpModal() {
     const steps = [
-      ["Connect your AI", "Explore API key and subscription setup in Connections. Both use demo accounts here."],
-      ["Make an agent yours", "Select a workflow step. Change the prompt, model, skills, or tools, then save the preset."],
-      ["Shape the handoffs", "Add or remove steps. Use the order buttons or connect an output port to a later input port."],
-      ["Run, approve, and inspect", "Run the demo, approve the coder, and inspect conversations, tool activity, handoffs, and artifacts."],
+      ["Start with the outcome", "Write your brief in New task. The demo uses a scripted newsletter example."],
+      ["Make the team yours", "Open Flows to add agents and edit their prompts, models, skills, and tools. Connect ports to preview a new step order."],
+      ["Follow the work", "Start the task. The next action stays at the top, conversations in the middle, and outputs on the right."],
+      ["Review before continuing", "Open the plan and QA sheet, approve the demo changes, then inspect the diff and test reports alongside each session."],
     ];
-    showModal("Take your team for a spin", `<p>A working interaction prototype. AI responses, account checks, code changes, and QA results are scripted examples.</p><div class="tour-list">${steps.map(([title, description], index) => `<div class="tour-step"><span>0${index + 1}</span><div><strong>${title}</strong><p>${description}</p></div></div>`).join("")}</div>`, button("close-modal", "Explore the studio", "arrow", "primary"));
+    showModal("How it works", `<p>A working interaction prototype. AI responses, account checks, code changes, and QA results are scripted examples.</p><div class="tour-list">${steps.map(([title, description], index) => `<div class="tour-step"><span>0${index + 1}</span><div><strong>${title}</strong><p>${description}</p></div></div>`).join("")}</div>`, button("close-modal", "Explore the studio", "arrow", "primary"));
   }
 
-  function startRun() {
+  async function startRun() {
+    if (ui.starting) return;
     if (engine.isActive()) {
-      ui.view = "workflow"; ui.tab = "session"; ui.historyId = null;
+      ui.view = "run"; ui.historyId = null;
       ui.step = Math.min(state.run.index, state.run.steps.length - 1); ui.followRun = true;
       render(); return;
     }
-    if (!state.workflow.length) return toast("Add at least one agent to the workflow first.");
-    if (!state.brief.trim()) return toast("Add a task brief before running the demo.");
-    const agents = state.workflow.map(id => state.agents.find(agent => agent.id === id));
+    if (!currentFlow().workflow.length) return toast("Add at least one agent to the workflow first.");
+    if (!state.brief.trim()) return toast("Enter a task first.");
+    const brief = state.brief;
+    const flow = { id: currentFlow().id, name: currentFlow().name, workflow: [...currentFlow().workflow] };
+    const project = activeProject() ? structuredClone(activeProject()) : null;
+    if (!project && catalog.mode === "local") { projectPicker(); return; }
+    if (project && catalog.mode !== "local") return toast("Open the local preview server to use this project.");
+    const agents = structuredClone(currentFlow().workflow.map(id => state.agents.find(agent => agent.id === id)));
     const missing = agents.find(agent => !state.connections.some(connection => connection.provider === agent.provider && connection.auth === agent.auth && connection.connected));
     if (missing) {
       ui.view = "connections"; render();
       toast(`${missing.name} needs a ${providerName(missing.provider)} / ${authName(missing.auth)} demo connection.`);
       return;
     }
+    ui.starting = true;
+    const startingState = state;
+    render(true);
+    try {
+      if (project) Object.assign(project, await catalog.request("/api/project", { path: project.path, execution: project.execution }));
+      const snapshots = await catalog.snapshot(agents.flatMap(agent => agent.skillBindings));
+      for (const agent of agents) agent.skillSnapshots = agent.skillBindings.map(binding => snapshots.find(item => item.id === binding.id));
+    } catch (error) {
+      toast(error.message); ui.starting = false; render(true); return;
+    }
+    ui.starting = false;
+    if (startingState !== state) return;
     if (state.run) state.history = [structuredClone(state.run), ...state.history].slice(0, 9);
-    ui.view = "workflow"; ui.tab = "session"; ui.historyId = null; ui.step = 0; ui.followRun = true; ui.sessionTab = "conversation";
-    engine.start({ id: `demo-${String(state.nextRun++).padStart(3, "0")}`, brief: state.brief, agents, approvalRequired: state.approvalRequired });
+    ui.view = "run"; ui.historyId = null; ui.step = 0; ui.followRun = true; ui.sessionTab = "conversation"; ui.artifactId = null;
+    engine.start({ id: `demo-${String(state.nextRun++).padStart(3, "0")}`, brief, agents, project, flow, approvalRequired: state.approvalRequired });
   }
 
   function download(name, content, type = "text/plain;charset=utf-8") {
@@ -353,25 +671,119 @@
     return [state.run, ...state.history].filter(Boolean).flatMap(run => run.artifacts).find(artifact => artifact.id === id);
   }
 
-  document.addEventListener("click", event => {
+  document.addEventListener("click", async event => {
+    if (ui.navigationActions && !event.target.closest(".sidebar-actions")) closeNavigationActions();
     const target = event.target.closest("[data-action]");
     if (!target || target.disabled) return;
     const action = target.dataset.action;
     const id = target.dataset.id;
-    if (action === "navigate") { ui.view = target.dataset.view; ui.historyId = null; render(); }
-    else if (action === "tab") { ui.tab = target.dataset.tab; render(); }
-    else if (action === "select-agent") { ui.selected = id; render(); }
-    else if (action === "help") helpModal();
+    if (action === "navigate") {
+      const fromDrawer = mobileNavigation.matches && ui.navigationOpen;
+      if (modal.open) closeModal();
+      ui.view = target.dataset.view; ui.historyId = null; ui.linkFrom = null; ui.navigationOpen = false; ui.navigationActions = false;
+      render(); if (fromDrawer) app.querySelector(".main").focus({ preventScroll: true });
+    }
+    else if (action === "toggle-sidebar") { state.navigationCollapsed = !state.navigationCollapsed; persist(); render(true); app.querySelector('[data-action="toggle-sidebar"]').focus({ preventScroll: true }); }
+    else if (action === "open-navigation") { ui.navigationOpen = true; render(true); app.querySelector(".mobile-nav-close").focus(); }
+    else if (action === "close-navigation") closeNavigation();
+    else if (action === "navigation-actions") { ui.navigationActions = !ui.navigationActions; render(true); }
+    else if (action === "project-picker") projectPicker();
+    else if (action === "flow-picker") flowPicker();
+    else if (action === "new-flow") flowForm();
+    else if (action === "rename-flow") flowForm("rename", id);
+    else if (action === "duplicate-flow") flowForm("duplicate", id);
+    else if (action === "select-flow") selectFlow(id, target.dataset.view || "team");
+    else if (action === "archive-flow") {
+      if (state.flows.filter(flow => !flow.archived).length === 1) return;
+      state.flows.find(flow => flow.id === id).archived = true;
+      if (state.activeFlowId === id) { state.activeFlowId = state.flows.find(flow => !flow.archived).id; ui.selected = null; ui.linkFrom = null; ui.pendingOrder = null; ui.zoom = null; }
+      persist(); render(true); flowPicker();
+    }
+    else if (action === "restore-flow") { state.flows.find(flow => flow.id === id).archived = false; persist(); render(true); flowPicker(); }
+    else if (action === "new-project") { if (ui.navigationOpen) closeNavigation(); ui.projectDraft = { name: "", path: "" }; projectModal(); }
+    else if (action === "back-project") projectModal();
+    else if (action === "browse-folders") await browseFolders(ui.projectDraft.path);
+    else if (action === "open-folder") await browseFolders(target.dataset.path);
+    else if (action === "choose-folder") {
+      if (!ui.folderListing) return;
+      ui.projectDraft.path = ui.folderListing.path;
+      ui.projectDraft.name ||= ui.folderListing.name;
+      projectModal();
+    }
+    else if (action === "select-project") {
+      state.activeProjectId = id; ui.view = "home"; ui.navigationOpen = false; ui.navigationActions = false;
+      persist(); if (modal.open) closeModal(); render(); document.getElementById("task-brief").focus();
+    }
+    else if (action === "project-settings") await projectSettings();
+    else if (action === "run-project") runProjectDetails();
+    else if (action === "configure-agent") { ui.view = "team"; ui.selected = id; render(); }
+    else if (action === "select-agent") { ui.selected = id; render(); if (matchMedia("(max-width: 880px)").matches) document.querySelector(".inspector")?.scrollIntoView({ block: "nearest" }); }
+    else if (action === "close-inspector") { ui.selected = null; render(); }
+    else if (action === "all-outputs") { ui.artifactId = null; render(); }
+    else if (action === "follow-run") { ui.followRun = true; ui.step = Math.min(state.run.index, state.run.steps.length - 1); render(); }
+    else if (action === "help") { if (ui.navigationOpen) closeNavigation(); helpModal(); }
     else if (action === "close-modal") closeModal();
     else if (action === "run") startRun();
     else if (action === "pause") engine.pause();
     else if (action === "resume") engine.resume();
-    else if (action === "approve") engine.approve();
+    else if (action === "approve") { engine.approve(); stamp("Approved"); }
+    else if (action === "use-idea") {
+      const brief = document.getElementById("task-brief");
+      state.brief = briefIdeas[Number(target.dataset.index)]; persist();
+      brief.value = state.brief; brief.focus();
+      const composer = brief.closest(".task-composer");
+      composer.classList.remove("idea-flash"); void composer.offsetWidth; composer.classList.add("idea-flash");
+    }
     else if (action === "cancel") engine.cancel();
-    else if (action === "live-session") { ui.view = "workflow"; ui.tab = "session"; ui.historyId = null; ui.followRun = true; ui.step = Math.min(state.run?.index || 0, (state.run?.steps.length || 1) - 1); render(); }
+    else if (action === "live-session") { ui.view = "run"; ui.historyId = null; ui.artifactId = null; ui.followRun = true; ui.step = Math.min(state.run?.index || 0, (state.run?.steps.length || 1) - 1); render(); }
     else if (action === "run-step") { ui.step = Number(target.dataset.index); ui.followRun = false; render(); }
     else if (action === "session-tab") { ui.sessionTab = target.dataset.tab; render(); }
-    else if (action === "skill") target.setAttribute("aria-pressed", target.getAttribute("aria-pressed") !== "true");
+    else if (action === "choose-skills") skillPicker(target.closest("form"));
+    else if (action === "back-skills") skillPicker();
+    else if (action === "apply-skills") {
+      const field = ui.pickerTarget?.querySelector(".skill-binding-field");
+      if (field) field.innerHTML = bindingField(ui.pickerDraft);
+      closeModal(); toast("Skills selected. Save the preset to keep these bindings.");
+    }
+    else if (action === "update-skill") {
+      const form = target.closest("form");
+      const source = catalog.skills.find(item => item.id === id);
+      const bindings = JSON.parse(form.elements.skillBindings.value).map(item => item.id === id ? { ...item, name: source.name, version: source.version } : item);
+      form.querySelector(".skill-binding-field").innerHTML = bindingField(bindings);
+      toast("Latest version selected. Save the preset to keep it.");
+    }
+    else if (action === "remove-skill") {
+      const form = target.closest("form");
+      const bindings = JSON.parse(form.elements.skillBindings.value).filter(item => item.id !== id);
+      form.querySelector(".skill-binding-field").innerHTML = bindingField(bindings);
+    }
+    else if (action === "skill-detail") skillDetail(id);
+    else if (action === "assign-skill") {
+      ui.pickerDraft = null;
+      const skill = catalog.skills.find(item => item.id === id);
+      showModal(`Attach ${escape(skill.name)}`, `<p>Choose an agent. You can review and save its skills in the inspector.</p><div class="assign-list">${state.agents.map(agent => `<button class="assign-agent" data-action="assign-to-agent" data-id="${escape(agent.id)}" data-skill="${id}">${agentIcon(agent)}<strong>${escape(agent.name)}</strong>${icon("chevron")}</button>`).join("")}</div>`);
+    }
+    else if (action === "assign-to-agent") {
+      const skill = catalog.skills.find(item => item.id === target.dataset.skill);
+      closeModal(); ui.view = "team"; ui.selected = id; render();
+      const form = app.querySelector(".inspector-form");
+      const bindings = JSON.parse(form.elements.skillBindings.value).filter(item => item.id !== skill.id);
+      bindings.push({ id: skill.id, name: skill.name, version: skill.version, sample: !!skill.sample });
+      form.querySelector(".skill-binding-field").innerHTML = bindingField(bindings);
+      form.querySelector(".skill-binding-field").scrollIntoView({ block: "nearest" });
+      toast("Skill selected. Save this preset to attach it.");
+    }
+    else if (action === "skill-sources") sourcesModal();
+    else if (action === "refresh-skills") {
+      target.disabled = true;
+      try { await catalog.refresh(); render(true); toast("Local skills refreshed. Existing bindings keep their versions."); }
+      catch (error) { target.disabled = false; toast(error.message); }
+    }
+    else if (action === "skill-snapshot") {
+      const binding = currentRun().steps[ui.step].agent.skillSnapshots.find(item => item.id === id);
+      try { ui.pickerDraft = null; showSkillFiles(binding.name, await catalog.readSnapshot(binding)); }
+      catch (error) { toast(`Snapshot unavailable: ${error.message}`); }
+    }
     else if (["zoom-in", "zoom-out", "fit"].includes(action)) {
       const scale = Number.parseInt(document.querySelector(".zoom-value").textContent, 10) / 100;
       ui.zoom = action === "fit" ? null : Math.max(.3, Math.min(1.5, scale + (action === "zoom-in" ? .1 : -.1)));
@@ -379,39 +791,47 @@
     }
     else if (["move-up", "move-down"].includes(action)) {
       if (engine.isActive()) return;
-      const index = state.workflow.indexOf(ui.selected);
+      const index = currentFlow().workflow.indexOf(ui.selected);
       const destination = index + (action === "move-up" ? -1 : 1);
-      if (destination < 0 || destination >= state.workflow.length) return;
-      [state.workflow[index], state.workflow[destination]] = [state.workflow[destination], state.workflow[index]];
+      if (destination < 0 || destination >= currentFlow().workflow.length) return;
+      [currentFlow().workflow[index], currentFlow().workflow[destination]] = [currentFlow().workflow[destination], currentFlow().workflow[index]];
       persist(); render(); toast("Step order saved. Handoffs now follow the new sequence.");
     }
     else if (action === "remove-step") {
       if (engine.isActive()) return;
-      state.workflow = state.workflow.filter(item => item !== ui.selected);
-      ui.selected = state.workflow[0] || state.agents[0].id;
+      currentFlow().workflow = currentFlow().workflow.filter(item => item !== ui.selected);
+      ui.selected = null;
       ui.linkFrom = null; persist(); render(); toast("Step removed. Its preset is still in your agent library.");
     }
-    else if (action === "connect-from") { if (engine.isActive()) return; ui.linkFrom = id; render(); toast("Select a later step's input port. This prototype keeps one sequential chain."); }
+    else if (action === "connect-from") { if (engine.isActive()) return; ui.linkFrom = id; render(); toast("Choose a later input port to preview the new order."); }
     else if (action === "connect-to") {
       if (engine.isActive()) return;
       if (!ui.linkFrom) return toast("Select an output port first.");
-      const from = state.workflow.indexOf(ui.linkFrom);
-      const to = state.workflow.indexOf(id);
+      const from = currentFlow().workflow.indexOf(ui.linkFrom);
+      const to = currentFlow().workflow.indexOf(id);
       if (to <= from) { toast("Backward links would create a cycle. Choose a later step."); return; }
-      state.workflow.splice(to, 1); state.workflow.splice(from + 1, 0, id);
-      ui.linkFrom = null; persist(); render(); toast("Connection saved. The remaining steps follow in sequence.");
+      if (to === from + 1) { ui.linkFrom = null; render(); return toast("These agents are already connected in this order."); }
+      ui.pendingOrder = [...currentFlow().workflow];
+      ui.pendingOrder.splice(to, 1); ui.pendingOrder.splice(from + 1, 0, id);
+      ui.linkFrom = null;
+      render();
+      showModal("Review the new order", `<p>This places <strong>${escape(state.agents.find(agent => agent.id === id).name)}</strong> directly after <strong>${escape(state.agents.find(agent => agent.id === currentFlow().workflow[from]).name)}</strong>. Other agents keep their relative order.</p><ol class="order-preview">${ui.pendingOrder.map((agentId, index) => { const agent = state.agents.find(item => item.id === agentId); return `<li class="${currentFlow().workflow[index] !== agentId ? "changed" : ""}"><span>${index + 1}</span>${agentIcon(agent)}<strong>${escape(agent.name)}</strong>${currentFlow().workflow[index] !== agentId ? '<small>Moved</small>' : ""}</li>`; }).join("")}</ol>`, button("close-modal", "Keep current order", "") + button("apply-order", "Apply new order", "check", "primary"));
+    }
+    else if (action === "apply-order") {
+      if (engine.isActive() || !ui.pendingOrder) return;
+      currentFlow().workflow = ui.pendingOrder; ui.pendingOrder = null;
+      persist(); closeModal(); render(); toast("New order saved.");
     }
     else if (action === "library") libraryModal();
     else if (action === "new-agent") newAgentModal();
     else if (action === "edit-agent") {
-      const agent = state.agents.find(item => item.id === id);
-      showModal(`Edit ${escape(agent.name)}`, agentForm(agent, true));
+      ui.view = "team"; ui.selected = id; render();
     }
     else if (action === "add-existing") {
       if (engine.isActive()) return toast("Finish or cancel the active run before editing the workflow.");
-      if (state.workflow.length >= 12) return toast("This prototype supports up to 12 steps in a workflow.");
-      if (!state.workflow.includes(id)) state.workflow.push(id);
-      ui.selected = id; ui.zoom = null; ui.view = "workflow"; ui.tab = "builder";
+      if (currentFlow().workflow.length >= 12) return toast("This prototype supports up to 12 steps in a workflow.");
+      if (!currentFlow().workflow.includes(id)) currentFlow().workflow.push(id);
+      ui.selected = id; ui.zoom = null; ui.view = "team";
       closeModal(); persist(); render(); toast("Agent added to the workflow.");
     }
     else if (action === "connect") connectionModal();
@@ -436,36 +856,50 @@
     else if (action === "toggle-approval") { state.approvalRequired = !state.approvalRequired; persist(); render(); toast("Default saved for the next run."); }
     else if (action === "open-run") {
       ui.historyId = state.run?.id === id ? null : id;
-      ui.view = "workflow"; ui.tab = "session"; ui.step = 0; ui.followRun = false; render();
+      ui.view = "run"; ui.step = 0; ui.followRun = false; ui.artifactId = null; render();
     }
     else if (action === "artifact") {
       const artifact = findArtifact(id);
-      if (artifact) showModal(escape(artifact.name), `<p>${escape(artifact.agent)} / ${escape(artifact.type)} / simulated artifact</p><pre>${escape(artifact.content)}</pre>`, button("download-artifact", "Download sample", "download", "primary", `data-id="${escape(id)}"`), true, "Run evidence");
+      if (artifact) { ui.artifactId = id; render(); }
     }
     else if (action === "download-artifact") { const artifact = findArtifact(id); if (artifact) download(artifact.name, artifact.content); }
-    else if (action === "export") download("agent-studio-demo-workflow.json", JSON.stringify({ prototype: true, name: "Feature delivery", workflow: state.workflow, agents: state.agents.filter(agent => state.workflow.includes(agent.id)), brief: state.brief, approvalRequired: state.approvalRequired }, null, 2), "application/json");
-    else if (action === "reset") showModal("Reset this demo?", "<p>This removes the prototype's presets, demo connections, and saved runs from this browser. Your repositories and real AI accounts are untouched.</p>", button("close-modal", "Keep my demo", "") + button("confirm-reset", "Reset demo", "reset", "primary"));
+    else if (action === "export") download("agent-studio-demo-workflow.json", JSON.stringify({ prototype: true, name: currentFlow().name, workflow: currentFlow().workflow, agents: state.agents.filter(agent => currentFlow().workflow.includes(agent.id)).map(({ skills, ...agent }) => agent), brief: state.brief, approvalRequired: state.approvalRequired }, null, 2), "application/json");
+    else if (action === "reset") {
+      if (ui.navigationOpen) closeNavigation();
+      else { closeNavigationActions(); app.querySelector('[data-action="navigation-actions"]').focus(); }
+      showModal("Reset this demo?", "<p>This removes the prototype's presets, demo connections, and saved runs from this browser. Your repositories and real AI accounts are untouched.</p>", button("close-modal", "Keep my demo", "") + button("confirm-reset", "Reset demo", "reset", "primary"));
+    }
     else if (action === "confirm-reset") {
-      engine.dispose(); state = initialState();
+      engine.dispose(); state = { ...initialState(), skillRoots: state.skillRoots, projects: state.projects, activeProjectId: state.activeProjectId };
       engine = new DemoEngine(onRunChange);
-      ui.view = "workflow"; ui.tab = "builder"; ui.selected = "planner"; ui.historyId = null; ui.linkFrom = null; ui.zoom = null;
+      ui.view = "home"; ui.selected = null; ui.historyId = null; ui.linkFrom = null; ui.zoom = null; ui.artifactId = null; ui.pendingOrder = null;
       persist(); closeModal(); render(); toast("A fresh studio is ready.");
     }
   });
 
-  document.addEventListener("submit", event => {
+  document.addEventListener("submit", async event => {
     const form = event.target;
     if (!form.matches("[data-form]")) return;
     event.preventDefault();
     const values = new FormData(form);
-    if (form.dataset.form === "agent") {
+    if (form.dataset.form === "flow") saveFlow(form);
+    else if (form.dataset.form === "project") await saveProject(form);
+    else if (form.dataset.form === "folder-path") await browseFolders(values.get("path").trim());
+    else if (form.dataset.form === "project-settings") await saveProjectSettings(form);
+    else if (form.dataset.form === "agent") {
       const agent = state.agents.find(item => item.id === form.dataset.id);
       const name = values.get("name").trim();
       const prompt = values.get("prompt").trim();
       if (!name || !prompt) return toast("Add a name and instructions before saving.");
       const [provider, auth] = values.get("connection").split("|");
-      Object.assign(agent, { name, prompt, provider, auth, model: values.get("model"), tools: values.getAll("tools"), skills: [...form.querySelectorAll('.skill-chip[aria-pressed="true"]')].map(chip => chip.dataset.skill) });
+      Object.assign(agent, { name, prompt, provider, auth, model: values.get("model"), tools: values.getAll("tools"), skillBindings: JSON.parse(values.get("skillBindings")) });
       persist(); if (modal.open) closeModal(); render(); toast(engine.isActive() ? "Preset saved. The active run keeps its original settings." : "Preset saved. Your next run will use these settings.");
+    }
+    else if (form.dataset.form === "skill-sources") {
+      const roots = values.get("roots").split("\n").map(item => item.trim()).filter(Boolean);
+      const submit = form.querySelector('[type="submit"]'); submit.disabled = true;
+      try { await catalog.refresh(roots); state.skillRoots = roots; persist(); closeModal(); render(); toast("Skill sources saved and scanned."); }
+      catch (error) { submit.disabled = false; toast(error.message); }
     }
     else if (form.dataset.form === "new-agent") {
       const name = values.get("name").trim();
@@ -474,14 +908,24 @@
       const template = initialState().agents.find(agent => agent.role === role);
       const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       state.agents.push({ ...template, id, name, prompt: prompts[role] });
-      const added = !engine.isActive() && state.workflow.length < 12;
-      if (added) state.workflow.push(id);
-      ui.selected = id; ui.view = added ? "workflow" : "agents"; ui.tab = "builder"; ui.zoom = null;
+      const added = !engine.isActive() && currentFlow().workflow.length < 12;
+      if (added) currentFlow().workflow.push(id);
+      ui.selected = id; ui.view = added ? "team" : "agents"; ui.zoom = null;
       persist(); closeModal(); render(); toast(added ? "Agent created and added. Tune its instructions in the side panel." : "Preset created in your library. Add it after the current run.");
     }
   });
 
   document.addEventListener("change", event => {
+    if (event.target.id === "new-worktree") {
+      document.getElementById("worktree-fields").hidden = !event.target.checked;
+      document.getElementById("local-branch").hidden = event.target.checked;
+    }
+    if (event.target.dataset.skillSelect) {
+      const skill = catalog.skills.find(item => item.id === event.target.dataset.skillSelect);
+      ui.pickerDraft = ui.pickerDraft.filter(item => item.id !== skill.id);
+      if (event.target.checked) ui.pickerDraft.push({ id: skill.id, name: skill.name, version: skill.version, sample: !!skill.sample });
+      document.getElementById("selection-count").textContent = `${ui.pickerDraft.length} selected`;
+    }
     if (event.target.id === "agent-connection") {
       const provider = event.target.value.split("|")[0];
       event.target.closest("form").querySelector('[name="model"]').innerHTML = models[provider].map(model => `<option>${model}</option>`).join("");
@@ -489,14 +933,50 @@
     if (event.target.id === "connection-provider") { ui.connectProvider = event.target.value; connectionModal(); }
   });
   document.addEventListener("input", event => {
+    if (event.target.id === "project-name") ui.projectDraft.name = event.target.value;
+    if (event.target.id === "project-path") ui.projectDraft.path = event.target.value;
     if (event.target.id === "task-brief") { state.brief = event.target.value; persist(); }
+    if (event.target.id === "skill-search") { ui.skillQuery = event.target.value; document.getElementById("skill-rows").innerHTML = skillRows(ui.skillQuery); }
+    if (event.target.id === "picker-search") { ui.pickerQuery = event.target.value; document.getElementById("picker-rows").innerHTML = skillRows(ui.pickerQuery, true); }
   });
   document.addEventListener("keydown", event => {
+    if (modal.open) return;
+    if (event.key === "Escape" && ui.navigationActions) {
+      closeNavigationActions(); app.querySelector('[data-action="navigation-actions"]').focus(); return;
+    }
+    if (mobileNavigation.matches && ui.navigationOpen) {
+      if (event.key === "Escape") { closeNavigation(); return; }
+      if (event.key === "Tab") {
+        const controls = [...app.querySelectorAll('.sidebar button:not(:disabled)')].filter(element => element.getClientRects().length);
+        const first = controls[0], last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    }
     if (event.key === "Escape" && ui.linkFrom) { ui.linkFrom = null; render(); }
   });
-  modal.addEventListener("cancel", () => clearTimeout(connectionTimer));
+  let lookFrame = 0;
+  document.addEventListener("pointermove", event => {
+    if (!lookFrame) lookFrame = requestAnimationFrame(() => {
+      lookFrame = 0;
+      document.documentElement.style.setProperty("--look-x", (event.clientX / innerWidth * 2 - 1).toFixed(2));
+      document.documentElement.style.setProperty("--look-y", (event.clientY / innerHeight * 2 - 1).toFixed(2));
+    });
+    const card = event.target.closest?.(".tilt");
+    if (!card || reducedMotion.matches) return;
+    const box = card.getBoundingClientRect();
+    card.style.setProperty("--tilt-x", `${(((event.clientX - box.left) / box.width) - .5) * 8}deg`);
+    card.style.setProperty("--tilt-y", `${(.5 - ((event.clientY - box.top) / box.height)) * 8}deg`);
+  });
+  document.addEventListener("pointerout", event => {
+    const card = event.target.closest?.(".tilt");
+    if (card && !card.contains(event.relatedTarget)) { card.style.removeProperty("--tilt-x"); card.style.removeProperty("--tilt-y"); }
+  });
+  mobileNavigation.addEventListener("change", () => { ui.navigationOpen = false; ui.navigationActions = false; render(true); });
+  modal.addEventListener("cancel", () => { clearTimeout(connectionTimer); ui.pickerDraft = null; ui.pickerTarget = null; ui.folderRequest = null; });
   modal.addEventListener("click", event => { if (event.target === modal && (event.clientX < modal.getBoundingClientRect().left || event.clientX > modal.getBoundingClientRect().right || event.clientY < modal.getBoundingClientRect().top || event.clientY > modal.getBoundingClientRect().bottom)) closeModal(); });
   window.addEventListener("pagehide", () => { persist(); engine.dispose(); });
   window.addEventListener("pageshow", event => { if (event.persisted) engine.pause(); });
   render();
+  catalog.load(state.skillRoots).then(() => render(true));
 })();

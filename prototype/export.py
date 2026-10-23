@@ -13,13 +13,15 @@ def main():
     html = html.replace('<link rel="stylesheet" href="styles.css">', f"<style>\n{css}\n</style>")
     scripts = []
     hashes = []
-    for name in ["demo-engine.js", "app.js"]:
+    for name in ["demo-engine.js", "skills.js", "app.js"]:
         html = html.replace(f'<script defer src="{name}"></script>', "")
         contents = "\n" + (source / name).read_text() + "\n"
         digest = base64.b64encode(hashlib.sha256(contents.encode()).digest()).decode()
         hashes.append(f"'sha256-{digest}'")
         scripts.append(f"<script>{contents}</script>")
     html = html.replace("script-src 'self'", "script-src " + " ".join(hashes))
+    html = html.replace("connect-src 'self'", "connect-src 'none'")
+    html = html.replace('<html lang="en">', '<html lang="en" data-offline="true">')
     html = html.replace("</body>", "\n".join(scripts) + "\n</body>")
     output.parent.mkdir(exist_ok=True)
     output.write_text(html)

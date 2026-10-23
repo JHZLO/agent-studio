@@ -2,17 +2,17 @@
 
 A personal workspace for defining AI agents, connecting them into workflows, and inspecting their work.
 
-**Status:** An interactive, browser-only prototype is available. The production execution engine and real AI connections are not implemented yet.
+**Status:** An interactive local prototype supports local project registration, worktree settings, multiple saved flows, local skill discovery, and per-agent skill bindings. AI execution, worktree creation, and account connections are simulated.
 
 ## Try the prototype
 
-Open [`prototype/index.html`](prototype/index.html) in a modern browser, or run:
+Run with Python 3.10 or later:
 
 ```bash
-python3 -m http.server 4177 --bind 127.0.0.1 --directory prototype
+python3 prototype/local_server.py
 ```
 
-Visit `http://127.0.0.1:4177/`. Edit agent presets, connect a workflow, run a scripted demo, approve changes, and inspect sessions and artifacts. No API keys or package installation are required.
+Visit `http://127.0.0.1:4182/`. Register a local folder, choose a flow, enter a task, and select **Run preview**. Use **Flows** to create, duplicate, rename, or archive workflows. Use **Skill library** to discover local `SKILL.md` files and attach them to an agent. No API keys or package installation are required. Git is required for branch inspection.
 
 See the [prototype guide](prototype/README.md) for the offline export command and simulation boundaries.
 
@@ -38,7 +38,7 @@ See the [prototype guide](prototype/README.md) for the offline export command an
 
 ## Development
 
-The product will start as a local web application with separate UI, local API, and execution engine boundaries. The browser prototype is a design artifact, not the production runtime.
+The product will start as a local web application with separate UI, local API, and execution engine boundaries. The preview server reads selected skill folders, directory names, and Git metadata, and stores local skill snapshots. It is not the production AI runtime.
 
 ## License
 

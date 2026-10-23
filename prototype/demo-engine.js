@@ -2,12 +2,12 @@
   "use strict";
 
   const roles = {
-    planner: { label: "Planner", icon: "compass", color: "#8b73ac", background: "#f0eaf7", description: "Turn the brief into a clear plan and a QA sheet before anyone writes code.", skills: ["Planning", "Schema design"] },
-    coder: { label: "Coder", icon: "code", color: "#ba8b5c", background: "#f8efdf", description: "Implement the plan in an isolated worktree, following your coding rules.", skills: ["Code style", "Implementation"] },
-    reviewer: { label: "Reviewer", icon: "shield", color: "#6c9561", background: "#edf3e5", description: "Review the actual changes and link findings to the tested version.", skills: ["Code review", "Security"] },
-    backend: { label: "Backend QA", icon: "terminal", color: "#668ba7", background: "#eaf2f7", description: "Exercise API edge cases and run bounded load tests against a test target.", skills: ["API testing", "Load testing"] },
-    frontend: { label: "Frontend QA", icon: "browser", color: "#b27a8e", background: "#f8edf2", description: "Walk through the QA sheet in a browser and collect visible evidence.", skills: ["Browser QA", "Accessibility"] },
-    documenter: { label: "Documenter", icon: "file", color: "#8a9070", background: "#f0f2e6", description: "Update documentation using verified changes and the test results.", skills: ["Documentation", "Handoff"] },
+    planner: { label: "Planner", icon: "compass", color: "#5b41bd", background: "#dccfff", description: "Turn the brief into a clear plan and a QA sheet before anyone writes code." },
+    coder: { label: "Coder", icon: "code", color: "#23629f", background: "#c6e3ff", description: "Implement the plan in an isolated worktree, following your coding rules." },
+    reviewer: { label: "Reviewer", icon: "shield", color: "#1b7451", background: "#c4efd9", description: "Review the actual changes and link findings to the tested version." },
+    backend: { label: "Backend QA", icon: "terminal", color: "#85600a", background: "#ffe9a6", description: "Exercise API edge cases and run bounded load tests against a test target." },
+    frontend: { label: "Frontend QA", icon: "browser", color: "#ab3567", background: "#ffd0e1", description: "Walk through the QA sheet in a browser and collect visible evidence." },
+    documenter: { label: "Documenter", icon: "file", color: "#a9501f", background: "#ffd8c0", description: "Update documentation using verified changes and the test results." },
   };
 
   const models = {
@@ -35,20 +35,30 @@
         model: ["planner", "reviewer", "documenter"].includes(role) ? "Claude Sonnet" : "Codex default",
         auth: "subscription",
         prompt: prompts[role],
-        skills: [...details.skills],
+        skillBindings: [],
         tools: ["read", ...(["coder", "documenter"].includes(role) ? ["write"] : []), ...(["coder", "backend", "frontend"].includes(role) ? ["shell"] : []), ...(role === "frontend" ? ["browser"] : [])],
       })),
-      workflow: Object.keys(roles),
+      flows: [{ id: "flow-default", name: "Feature delivery", workflow: Object.keys(roles), archived: false }],
+      activeFlowId: "flow-default",
       connections: [
         { id: "codex-subscription", provider: "codex", auth: "subscription", connected: true },
         { id: "claude-subscription", provider: "claude", auth: "subscription", connected: true },
       ],
-      brief: "Add a newsletter signup form with email validation and clear success and error states.",
+      brief: "",
+      projects: [],
+      activeProjectId: null,
       approvalRequired: true,
       run: null,
       history: [],
       nextRun: 1,
     };
+  }
+
+  function initializeFlows(state) {
+    if (!state.flows?.length) state.flows = [{ id: "flow-default", name: "Feature delivery", workflow: [...(state.workflow || [])], archived: false }];
+    if (!state.flows.some(flow => !flow.archived)) state.flows[0].archived = false;
+    if (!state.flows.some(flow => flow.id === state.activeFlowId && !flow.archived)) state.activeFlowId = state.flows.find(flow => !flow.archived).id;
+    delete state.workflow;
   }
 
   function scriptFor(step, run) {
@@ -67,7 +77,7 @@
       coder: {
         opening: "I have the plan and QA sheet from the previous session. I will reuse the existing form and validation helpers in the demo worktree.",
         tool: "apply_patch  src/components/newsletter-form.tsx\napply_patch  src/api/subscribe.ts\nrun          newsletter unit tests\nresult       4 sample cases passed; diff fixture prepared.",
-        result: "The sample change is ready for review: a validated form, duplicate-safe subscription handling, and clear feedback. No files on your computer were changed by this demo.",
+        result: "The sample change is ready for review: a validated form, duplicate-safe subscription handling, and clear feedback. No project files on your computer were changed by this demo.",
         artifacts: [artifact("newsletter-change.diff", "Code diff", "diff --git a/src/components/newsletter-form.tsx b/src/components/newsletter-form.tsx\n--- a/src/components/newsletter-form.tsx\n+++ b/src/components/newsletter-form.tsx\n@@ sample fixture @@\n+ <label htmlFor=\"email\">Email address</label>\n+ <input id=\"email\" type=\"email\" required aria-describedby=\"email-error\" />\n+ <p id=\"email-error\" role=\"alert\">{error}</p>\n+ <p role=\"status\">{successMessage}</p>\n\nCode reference: demo-diff-v1\nThis excerpt demonstrates the artifact viewer. It is not an applied patch.")],
       },
       reviewer: {
@@ -97,7 +107,7 @@
         opening: "I will use the plan, code reference, review, and QA reports to prepare the final documentation. Unverified claims will stay out of the handoff.",
         tool: "read_artifacts  plan / diff / review / API results / browser QA\nprepare         README update and final handoff\nresult          Documentation fixture ready.",
         result: "The demo workflow is complete. You can inspect every session and artifact. The final handoff includes the task, sample code reference, test evidence, and the prototype's limitations.",
-        artifacts: [artifact("handoff.md", "Handoff", "# Final sample handoff\n\nChange: newsletter signup with validation and accessible feedback.\nCode reference: demo-diff-v1\nEvidence: implementation plan, QA sheet, code diff, review, API and browser reports.\n\nVerified in this prototype: workflow state transitions and artifact delivery.\nSimulated: implementation, AI responses, tests, usage, and account authentication.\nNot performed: real file changes, network requests, commits, or paid AI calls.\n\nNext action in the real product: review the artifacts before accepting the change.")],
+        artifacts: [artifact("handoff.md", "Handoff", "# Final sample handoff\n\nChange: newsletter signup with validation and accessible feedback.\nCode reference: demo-diff-v1\nEvidence: implementation plan, QA sheet, code diff, review, API and browser reports.\n\nVerified in this prototype: workflow state transitions and artifact delivery.\nSimulated: implementation, AI responses, tests, usage, and account authentication.\nNot performed: project file changes, AI requests, commits, or paid AI calls.\n\nNext action in the real product: review the artifacts before accepting the change.")],
       },
     };
     return scripts[step.agent.role] || scripts.planner;
@@ -123,11 +133,11 @@
       this.onChange(structuredClone(this.run));
     }
 
-    start({ id, brief, agents, approvalRequired }) {
+    start({ id, brief, agents, project = null, flow = null, approvalRequired }) {
       if (this.isActive()) return false;
       clearTimeout(this.timer);
       this.run = {
-        id, brief, status: "running", createdAt: new Date().toISOString(),
+        id, brief, project: structuredClone(project), flow: structuredClone(flow), status: "running", createdAt: new Date().toISOString(),
         index: 0, phase: 0, approved: !approvalRequired, artifacts: [],
         note: "Scripted demo. No AI calls or repository changes.",
         steps: agents.map((agent, index) => ({
@@ -161,12 +171,12 @@
       if (step.agent.tools.includes("write") && !run.approved) {
         step.status = "waiting_approval";
         run.status = "waiting_approval";
-        this.message("system", "Approval requested: allow file changes in the demo worktree for this run. Your real files will not be touched.");
+        this.message("system", "Approval requested: allow file changes in the demo worktree for this run. Your project files will not be touched.");
         this.emit();
         return;
       }
       step.status = "running";
-      this.message("system", `Fresh session started with ${step.receivedArtifacts.length} artifact references. Preset and model settings are snapshotted for this run.`);
+      this.message("system", `Fresh session started with ${step.receivedArtifacts.length} artifact references. Preset, model settings, and ${step.agent.skillSnapshots?.length || 0} skill bindings are snapshotted for this run.`);
       this.emit();
       this.schedule();
     }
@@ -245,5 +255,5 @@
     }
   }
 
-  window.StudioDemo = { roles, models, prompts, initialState, DemoEngine };
+  window.StudioDemo = { roles, models, prompts, initialState, initializeFlows, DemoEngine };
 })();
