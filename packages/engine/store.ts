@@ -3,7 +3,7 @@ import { mkdirSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import type { Run, Settings, Connection } from "../contracts/index.ts";
+import type { Run, Settings, Connection, ImportedSession } from "../contracts/index.ts";
 
 export const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 export class Store extends EventEmitter {
@@ -20,6 +20,7 @@ export class Store extends EventEmitter {
       CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, kind TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_run ON events(run_id, seq);
       CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, method TEXT NOT NULL, digest TEXT NOT NULL, status TEXT NOT NULL, result TEXT, error TEXT);
+      CREATE TABLE IF NOT EXISTS imported_sessions (id TEXT PRIMARY KEY, value TEXT NOT NULL);
       PRAGMA user_version = 1;
     `);
   }
@@ -28,6 +29,14 @@ export class Store extends EventEmitter {
     return row ? JSON.parse(row.value) : null;
   }
   set(id: string, value: unknown) { this.db.prepare("INSERT INTO settings VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value").run(id, JSON.stringify(value)); }
+  importedSessions() {
+    return (this.db.prepare("SELECT json_remove(value, '$.messages') AS value, json_array_length(value, '$.messages') AS messageCount FROM imported_sessions ORDER BY json_extract(value, '$.updatedAt') DESC").all() as { value: string; messageCount: number }[]).map(row => ({ ...JSON.parse(row.value), messageCount: row.messageCount }));
+  }
+  importedSession(id: string): ImportedSession | null {
+    const row = this.db.prepare("SELECT value FROM imported_sessions WHERE id = ?").get(id) as { value: string } | undefined;
+    return row ? JSON.parse(row.value) : null;
+  }
+  saveImportedSession(session: ImportedSession) { this.db.prepare("INSERT OR IGNORE INTO imported_sessions VALUES (?, ?)").run(session.key, JSON.stringify(session)); }
   run(id: string): Run | null {
     const row = this.db.prepare("SELECT value FROM runs WHERE id = ?").get(id) as { value: string } | undefined;
     return row ? JSON.parse(row.value) : null;
@@ -72,7 +81,7 @@ export class Store extends EventEmitter {
   }
   state() {
     const latest = this.db.prepare("SELECT value FROM runs ORDER BY created_at DESC LIMIT 1").get() as { value: string } | undefined;
-    return { ...this.get<Settings>("settings"), connections: this.get<Connection[]>("connections") ?? [], run: latest ? JSON.parse(latest.value) : null, history: this.history(), revision: this.get<number>("revision") ?? 0, eventSeq: this.seq() };
+    return { ...this.get<Settings>("settings"), connections: this.get<Connection[]>("connections") ?? [], run: latest ? JSON.parse(latest.value) : null, history: this.history(), importedSessions: this.importedSessions(), revision: this.get<number>("revision") ?? 0, eventSeq: this.seq() };
   }
   close() { this.db.close(); }
 }

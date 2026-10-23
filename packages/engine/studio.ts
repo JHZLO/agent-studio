@@ -6,7 +6,7 @@ import { z } from "zod";
 import { Annotation, StateGraph, START, END } from "@langchain/langgraph";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { initialState } from "../contracts/defaults.js";
-import { settingsSchema, activeStatuses, now, type Run, type Step, type Settings, type Approval } from "../contracts/index.ts";
+import { settingsSchema, activeStatuses, now, type Run, type Step, type Settings, type Approval, type ImportedSession } from "../contracts/index.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
 import { folders, inspectProject, prepareProject, projectInstructions, git } from "./projects.ts";
@@ -14,6 +14,7 @@ import { Connections } from "./connections.ts";
 import { CodexHost, RpcError, accountFingerprint, claudeBinary, runtimeEnvironment, type Wire } from "./codex.ts";
 import { Toolbox, toolSpecs, codeReference, type Receipt } from "./tools.ts";
 import { openTerminal, terminalCall } from "./terminals.ts";
+import { LocalHistory } from "./local-history.ts";
 
 const resultSchema = z.object({ summary: z.string().min(1).max(16000), status: z.enum(["completed", "blocked"]), artifacts: z.array(z.object({ name: z.string().regex(/^[a-zA-Z0-9_-]+\.(md|json|txt)$/), type: z.string().max(80), content: z.string().max(64000) })).max(12) });
 const requirements: Record<string, string> = { planner: "Return implementation-plan.md and qa-sheet.md with acceptance criteria and expected results BEFORE coding.", coder: "Implement the plan. Return implementation.md explaining real changed files and verification. The runner captures the actual diff.", reviewer: "Inspect the real diff. Return review.md with severity, file, line, impact, and evidence. Do not edit the project.", backend: "Execute API edge cases from the QA sheet using studio_http or approved commands. Return api-report.json with expected and actual results and tool receipt IDs. A claim without a tool result is not evidence. Run a bounded k6 test only if the task requests load testing.", frontend: "Use studio_browser to execute the QA sheet against a local app. Capture at least one screenshot. Return browser-qa.md with expected and actual results and receipt IDs. If the app cannot be opened, return blocked.", documenter: "Update relevant project documentation using verified results. Return handoff.md with changes, evidence, code reference, and remaining limitations." };
@@ -33,7 +34,7 @@ export class Studio {
   private claudeProcess?: ReturnType<typeof spawn>;
   private readonly graph;
 
-  constructor(readonly store: Store, readonly dataDir: string, readonly socketDir: string) {
+  constructor(readonly store: Store, readonly dataDir: string, readonly socketDir: string, readonly localHistory = new LocalHistory()) {
     if (!store.get("settings")) store.set("settings", settingsSchema.parse(initialState()));
     this.catalog = new SkillCatalog(join(dataDir, "skill-snapshots"));
     this.connections = new Connections(store, socketDir);
@@ -79,6 +80,17 @@ export class Studio {
     if (method === "snapshot") return this.catalog.readSnapshot(input.version);
     if (method === "folders") return folders(input.path);
     if (method === "project") return inspectProject(input.path, input.execution);
+    if (method === "local.scan") {
+      const found = await this.localHistory.scan(), imported = new Set(this.store.importedSessions().map(session => session.key));
+      return { ...found, sessions: found.sessions.map(session => ({ ...session, imported: imported.has(session.key) })) };
+    }
+    if (method === "local.import") return this.importLocal(input);
+    if (method === "local.read") {
+      const key = z.string().max(100).parse(input.key), offset = z.number().int().min(0).parse(input.offset ?? 0);
+      const session = this.store.importedSession(key);
+      if (!session) throw new Error("Imported session not found.");
+      return { ...session, messages: session.messages.slice(offset, offset + 100), total: session.messages.length, nextOffset: offset + 100 < session.messages.length ? offset + 100 : null };
+    }
     if (method === "project.remove") {
       const id = z.string().min(1).parse(input.id), previous = this.settings();
       if (!previous.projects.some(project => project.id === id)) throw new Error("Project not found.");
@@ -107,10 +119,43 @@ export class Studio {
       if (this.starting || (this.active && activeStatuses.includes(this.active.status))) throw new Error("Finish or cancel the active run before resetting.");
       const previous = this.settings();
       const state = settingsSchema.parse({ ...initialState(), projects: previous.projects, activeProjectId: previous.activeProjectId, skillRoots: previous.skillRoots });
-      this.store.db.transaction(() => { this.store.set("settings", state); this.store.set("connections", []); this.store.set("revision", (this.store.get<number>("revision") ?? 0) + 1); this.store.db.exec("DELETE FROM runs; DELETE FROM events;"); this.store.db.prepare("DELETE FROM commands WHERE id != ?").run(input.commandId); })();
+      this.store.db.transaction(() => { this.store.set("settings", state); this.store.set("connections", []); this.store.set("revision", (this.store.get<number>("revision") ?? 0) + 1); this.store.db.exec("DELETE FROM runs; DELETE FROM events; DELETE FROM imported_sessions;"); this.store.db.prepare("DELETE FROM commands WHERE id != ?").run(input.commandId); })();
       await this.connections.close(); this.active = undefined; return this.store.state();
     }
     throw new Error("Unknown runner operation.");
+  }
+  private async importLocal(input: Wire) {
+    const selection = z.object({ projects: z.array(z.string().max(100)).max(100), sessions: z.array(z.string().max(100)).max(100) }).parse(input);
+    const sessionKeys = [...new Set(selection.sessions)];
+    const projectKeys = [...new Set([...selection.projects, ...sessionKeys.map(key => this.localHistory.session(key).projectKey)])];
+    if (!projectKeys.length) throw new Error("Select at least one project or session.");
+    const previous = this.settings(), projects = [...previous.projects], byKey = new Map<string, Settings["projects"][number]>();
+    for (const key of projectKeys) {
+      const candidate = this.localHistory.project(key), details = await inspectProject(candidate.path);
+      let project = projects.find(item => item.path === details.path);
+      if (!project) {
+        project = { ...details, id: randomUUID(), name: candidate.name, execution: { mode: "local", baseRef: details.defaultRef, branchName: "" } };
+        projects.push(project);
+      }
+      byKey.set(key, project);
+    }
+    const sessions: ImportedSession[] = [];
+    let bytes = 0;
+    for (const key of sessionKeys) {
+      if (this.store.importedSession(key)) continue;
+      const session = await this.localHistory.read(key);
+      for (const message of session.messages) message.text = this.connections.redact(message.text);
+      bytes += Buffer.byteLength(JSON.stringify(session));
+      if (bytes > 20 * 1024 * 1024) throw new Error("Selected conversations exceed 20 MB. Import fewer sessions at once.");
+      sessions.push({ ...session, project: byKey.get(session.projectKey)!, importedAt: now() });
+    }
+    const activeProjectId = previous.activeProjectId ?? byKey.values().next().value!.id;
+    const result = this.store.db.transaction(() => {
+      const saved = this.saveSettings({ state: { ...previous, projects, activeProjectId }, revision: input.revision });
+      for (const session of sessions) this.store.saveImportedSession(session);
+      return saved;
+    })();
+    return { ...result, projects, activeProjectId, importedSessions: this.store.importedSessions(), addedProjects: projects.length - previous.projects.length, addedSessions: sessions.length };
   }
   private async start(input: Wire) {
     if (this.starting || (this.active && activeStatuses.includes(this.active.status))) throw new Error("Only one run can be active at a time.");
