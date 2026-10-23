@@ -15,7 +15,8 @@
     "audit:k6": "node scripts/audit-k6.mjs",
     "runner": "node --import tsx apps/runner/main.ts",
     "stop": "node --import tsx scripts/stop.ts",
-    "terminal": "node --import tsx scripts/terminal.ts"
+    "terminal": "node --import tsx scripts/terminal.ts",
+    "build": "vite build"
   },
   "dependencies": {
     "@openai/codex": "0.163.0",

@@ -1,0 +1,8 @@
+.approval-details { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, monospace; margin-top: 12px; }
+.artifact-image { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; margin: 12px 0; }
+.terminal-panel { display: flex; flex-direction: column; gap: 12px; min-height: 440px; }
+.terminal-screen { height: 460px; padding: 10px; background: #211d2a; border-radius: 8px; overflow: hidden; }
+.terminal-screen .xterm { height: 100%; }
+
+.usage-label { display: block; width: 100%; color: var(--muted); font-size: 11px; }
+.session-foot { flex-wrap: wrap; }
