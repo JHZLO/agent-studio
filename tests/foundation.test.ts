@@ -119,6 +119,22 @@ test("History lists remain small while complete conversations stay retrievable",
   assert(JSON.stringify(state.history).length < 1000); assert.equal(store.run("old")!.steps[0].messages[0].text.length, 100000);
 });
 
+test("Boundary recovery refuses files changed after the saved handoff", async t => {
+  const { Studio } = await import("../packages/engine/studio.ts");
+  const { codeReference } = await import("../packages/engine/tools.ts");
+  const path = await directory(t), project = join(path, "project"); await mkdir(project);
+  await writeFile(join(project, "README.md"), "Original");
+  const store = new Store(join(path, "state.sqlite"));
+  const run = { id: "boundary", createdAt: "2026-01-01", status: "running", cwd: project, index: 1, controlMode: "studio", steps: [{ status: "succeeded", codeReference: await codeReference(project) }, { status: "queued" }] } as unknown as Run;
+  store.saveRun(run, "step.completed");
+  const studio = new Studio(store, path, path); t.after(async () => { await studio.close(); store.close(); });
+  await writeFile(join(project, "README.md"), "Changed outside the runner");
+  await assert.rejects(studio.dispatch("run.reconcile", { id: run.id }), /changed after the saved step boundary/);
+  assert.equal(store.run(run.id)!.status, "needs_reconciliation");
+  await writeFile(join(project, "README.md"), "Original");
+  assert.equal((await studio.dispatch("run.reconcile", { id: run.id }) as Run).status, "paused");
+});
+
 test("Workspace reset preserves registered projects, skill sources and project files", async t => {
   const { Studio } = await import("../packages/engine/studio.ts");
   const path = await directory(t), project = join(path, "project"); await mkdir(project);

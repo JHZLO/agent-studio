@@ -83,6 +83,7 @@ export class Studio {
     if (method === "run.start") return this.start(input);
     if (method === "run.read") return this.getRun(input.id);
     if (method === "run.control") return this.control(input);
+    if (method === "run.reconcile") return this.reconcile(input.id);
     if (method === "artifact") {
       const run = this.getRun(input.runId), artifact = run.artifacts.find(a => a.id === input.id);
       if (!artifact) throw new Error("Artifact not found.");
@@ -387,6 +388,42 @@ export class Studio {
     } else if (input.action !== "pause") throw new Error("Unknown run control.");
     return structuredClone(run);
   }
+  private async reconcile(id: string) {
+    const run = this.getRun(id);
+    if (run.status !== "needs_reconciliation") throw new Error("This run does not need reconciliation.");
+    if (run.controlMode !== "studio") {
+      run.note = "The runner lost terminal control state. Inspect the terminal and cancel this run before starting another workflow.";
+      this.save(run, "recovery.blocked"); return run;
+    }
+    const step = run.steps[run.index];
+    await realpath(run.cwd);
+    if (step?.status === "queued" && !step.providerThreadId && run.steps.slice(0, run.index).every(previous => previous.status === "succeeded")) {
+      const previous = run.steps[run.index - 1];
+      if (previous?.codeReference && previous.codeReference !== await codeReference(run.cwd)) throw new Error("Project files changed after the saved step boundary. Inspect the changes before starting a new run.");
+      run.status = "paused"; run.pauseRequested = true; run.note = "Recovered a saved step boundary. Reconnect any accounts, then resume when ready.";
+      this.save(run, "recovery.boundary"); return run;
+    }
+    if (!step?.providerThreadId || step.agent.provider !== "codex") { run.note = "The provider cannot prove a recoverable turn. Cancel this run and inspect its files before starting again."; this.save(run, "recovery.blocked"); return run; }
+    const host = await this.codexHost(run, step);
+    const { thread } = await host.client.call("thread/read", { threadId: step.providerThreadId, includeTurns: true });
+    if (thread.id !== step.providerThreadId || await realpath(thread.cwd) !== await realpath(run.cwd)) throw new Error("The provider returned a different thread or project.");
+    const turn = thread.turns.find((t: Wire) => t.id === (step.activeTurnId || step.lastTurnId));
+    if (!turn || turn.status !== "completed" || thread.turns.some((t: Wire) => t.status === "inProgress")) { run.note = "The saved turn is missing or still active. No new turn was sent. Wait, inspect the provider, or cancel."; this.save(run, "recovery.pending"); return run; }
+    const text = turn.items.filter((item: Wire) => item.type === "agentMessage").at(-1)?.text;
+    if (!text) throw new Error("The completed provider turn has no recoverable final answer.");
+    const receipts = this.store.receipts(run.id, step.id) as Receipt[];
+    if (receipts.length && receipts.at(-1)!.codeReference !== await codeReference(run.cwd)) throw new Error("Project files changed after the last recorded tool result. Inspect the changes before starting a new run.");
+    this.message(run, step, "assistant", text);
+    delete step.activeTurnId;
+    run.artifacts = run.artifacts.filter(artifact => artifact.stepId !== step.id || artifact.type === "Screenshot");
+    try { await this.finishStep(run, step, text, receipts); }
+    catch (error) { run.note = `Recovered the exact turn, but its evidence is incomplete: ${(error as Error).message}`; this.save(run, "recovery.blocked"); return run; }
+    run.status = run.index === run.steps.length ? "succeeded" : "paused";
+    run.pauseRequested = true; run.note = "Recovered the exact provider turn and recorded evidence. Review the handoff before resuming.";
+    if (run.status === "succeeded") { run.completedAt = now(); await this.cleanup(); }
+    this.save(run, "recovery.completed", { threadId: thread.id, turnId: turn.id, gap: true }); return run;
+  }
+
   private async cleanup() {
     if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = undefined; }
     const child = this.claudeProcess;
