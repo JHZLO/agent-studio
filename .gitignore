@@ -1,0 +1,35 @@
+# Build output and dependencies
+node_modules/
+/target/
+/dist/
+/build/
+/coverage/
+.venv/
+__pycache__/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.sw?
+
+# Local secrets and environment
+.env
+.env.*
+*.pem
+*.key
+
+# Local agent instructions and personal tool settings
+.agent/
+.agents/
+.claude/
+.codex/
+.gemini/
+skills-lock.json
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+
+# Local planning notes
+/PRD.md
