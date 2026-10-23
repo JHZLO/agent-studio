@@ -317,7 +317,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
 
   function stepSettings(agent) {
     const index = currentFlow().workflow.indexOf(agent.id);
-    return `<div class="step-settings"><div class="step-order"><span class="field-label">Step order</span><strong>${index + 1} of ${currentFlow().workflow.length}</strong></div><div class="step-controls">${button("move-up", "Earlier", "up", "small", 'aria-label="Move step earlier"', index === 0 || engine.isActive())}${button("move-down", "Later", "down", "small", 'aria-label="Move step later"', index === currentFlow().workflow.length - 1 || engine.isActive())}</div><dl class="definition-list"><dt>Connection</dt><dd>${providerName(agent.provider)} / ${authName(agent.auth)}</dd><dt>Model</dt><dd>${escape(agent.model)}</dd><dt>Skills</dt><dd>${agent.skillBindings.length} attached</dd></dl><p class="meta">Edit this agent's instructions, model, skills, and tools in the Agent library.</p>${button("edit-agent", "Edit in Agent library", "edit", "full", `data-id="${escape(agent.id)}"`)}<div class="step-remove">${button("remove-step", "Remove from flow", "trash", "text small", "", engine.isActive())}<p class="meta">The agent stays in your library.</p></div></div>`;
+    return `<div class="step-settings"><div class="step-order"><span class="field-label">Step order</span><strong>${index + 1} of ${currentFlow().workflow.length}</strong></div><div class="step-controls">${button("move-up", "Earlier", "up", "small", 'aria-label="Move step earlier"', index === 0 || engine.isActive())}${button("move-down", "Later", "down", "small", 'aria-label="Move step later"', index === currentFlow().workflow.length - 1 || engine.isActive())}</div><dl class="definition-list"><dt>Connection</dt><dd>${providerName(agent.provider)} / ${authName(agent.auth)}</dd><dt>Model</dt><dd>${escape(agent.model)}</dd><dt>Permissions</dt><dd>${permissionLevels[agent.permissionLevel || "ask"].label}</dd><dt>Skills</dt><dd>${agent.skillBindings.length} attached</dd></dl><p class="meta">Edit this agent's instructions, model, skills, and tools in the Agent library.</p>${button("edit-agent", "Edit in Agent library", "edit", "full", `data-id="${escape(agent.id)}"`)}<div class="step-remove">${button("remove-step", "Remove from flow", "trash", "text small", "", engine.isActive())}<p class="meta">The agent stays in your library.</p></div></div>`;
   }
 
   function editAgent(id, form = null) {
@@ -329,17 +329,29 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     const flowCount = state.flows.filter(flow => flow.workflow.includes(id)).length;
     showModal(escape(agent.name), `<p class="agent-reuse-note">${flowCount ? `Used in ${flowCount} ${flowCount === 1 ? "flow" : "flows"}. Changes apply everywhere this agent is used.` : "Configure this agent, then add it to a flow."} Active tasks keep their current settings.</p>${form ? '<div id="agent-editor-fields"></div>' : agentForm(agent)}`, button("close-modal", "Cancel", "") + '<button type="submit" form="agent-preset-form" class="btn primary">Save agent</button>', true, "Agent library / Edit agent");
     modal.classList.add("agent-editor");
+    if (!form) updatePermissionFields(modal.querySelector("#agent-preset-form"));
     if (form) {
       modal.querySelector("#agent-editor-fields").replaceWith(form);
       form.querySelector('[data-action="choose-skills"]').focus();
     } else modal.querySelector("#agent-name").focus();
   }
 
+  const permissionLevels = {
+    ask: { label: "Ask for approval", description: "Uses the workspace file-write approval setting. Each shell command and external HTTP target asks for approval." },
+    "read-only": { label: "Read only", description: "Read project files and previous outputs. File writes, shell, HTTP, and browser actions are disabled." },
+    project: { label: "Project automation", description: "Selected tools can edit project files and run sandboxed commands with network access without prompts. External HTTP tool targets still ask for approval." },
+  };
+  function updatePermissionFields(form) {
+    const level = form.elements.permissionLevel.value;
+    form.querySelector("#permission-description").textContent = permissionLevels[level].description;
+    for (const input of form.querySelectorAll('[name="tools"]')) input.disabled = level === "read-only" && input.value !== "read";
+  }
   function agentForm(agent) {
     return `<form id="agent-preset-form" class="agent-form" data-form="agent" data-id="${escape(agent.id)}"><div class="field agent-name-field"><label for="agent-name">Name</label><input id="agent-name" name="name" value="${escape(agent.name)}" maxlength="40" required></div>
       <div class="field prompt-field"><label for="agent-prompt">Instructions</label><textarea id="agent-prompt" name="prompt" rows="4" maxlength="2500" required>${escape(agent.prompt)}</textarea></div>
       <div class="field"><label for="agent-connection">AI connection</label><select id="agent-connection" name="connection">${["codex", "claude"].flatMap(provider => ["subscription", "api"].map(auth => `<option value="${provider}|${auth}"${selected(`${agent.provider}|${agent.auth}`, `${provider}|${auth}`)}>${providerName(provider)} / ${authName(auth)}</option>`)).join("")}</select></div>
       <div class="field"><label for="agent-model">Model</label><select id="agent-model" name="model">${modelOptions(agent.provider, agent.auth, agent.model)}</select><small>Models come from your connection. Aliases follow runtime updates; Default uses the runtime selection.</small>${button("refresh-models", "Refresh models", "reset", "text small")}</div>
+      <div class="field"><label for="agent-permission">Permission level</label><select id="agent-permission" name="permissionLevel" aria-describedby="permission-description">${Object.entries(permissionLevels).map(([value, level]) => `<option value="${value}"${selected(agent.permissionLevel || "ask", value)}>${level.label}</option>`).join("")}</select><small id="permission-description">${permissionLevels[agent.permissionLevel || "ask"].description}</small></div>
       <div class="field skill-binding-field">${bindingField(agent.skillBindings || [])}</div>
       <div class="field agent-tools-field"><span class="field-label">Allowed tools</span><div class="checks">${[["read", "Read files"], ["write", "Write files"], ["shell", "Shell"], ["browser", "Browser"]].map(([value, label]) => `<label class="check"><input type="checkbox" name="tools" value="${value}"${agent.tools.includes(value) ? " checked" : ""}>${label}</label>`).join("")}</div></div>
       <div class="context-chip">${icon("leaf")}New session per step. Only the brief, decisions, and artifact references carry forward.</div></form>`;
@@ -563,7 +575,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
 
   function defaultsView() {
     return heading("<em>Defaults</em>", "", button("help", "About Agent Studio", "help"), "Workspace defaults") +
-      `<section class="panel settings-panel"><div class="setting-row"><div><h2>Fresh session at each handoff</h2><p>Pass the goal, decisions, and artifact references. Keep the original conversation available for inspection.</p></div><span class="badge">Always on</span></div><div class="setting-row"><div><h2>Approval before file changes</h2><p>Request approval before the first write-enabled agent. Your choice applies to the next run.</p></div><button class="toggle" role="switch" aria-label="Approval before file changes" aria-checked="${state.approvalRequired}" data-action="toggle-approval"></button></div><div class="setting-row"><div><h2>No automatic paid fallback</h2><p>A subscription limit should pause the task. Switching to API billing is a separate, explicit choice.</p></div><span class="badge">Always on</span></div><div class="setting-row"><div><h2>Keep the evidence</h2><p>Plans, QA cases, diffs, and test results stay attached to the run and its code reference.</p></div><span class="badge">Always on</span></div><div class="setting-row"><div><h2>One active task at a time</h2><p>Pause, resume, or cancel an active run before starting another. Preset edits never change an active run's snapshot.</p></div><span class="badge gray">1 run</span></div><div class="setting-row"><div><h2>Local storage</h2><p>Presets and runs are saved in local SQLite. API keys stay in runner memory. Reset preserves your projects, skill sources, and project files.</p></div>${button("reset", "Reset workspace", "reset", "small")}</div></section>`;
+      `<section class="panel settings-panel"><div class="setting-row"><div><h2>Fresh session at each handoff</h2><p>Pass the goal, decisions, and artifact references. Keep the original conversation available for inspection.</p></div><span class="badge">Always on</span></div><div class="setting-row"><div><h2>Approval before file changes</h2><p>Ask before the first write-enabled agent using Ask for approval. Project automation agents use their own permission level. Applies to the next run.</p></div><button class="toggle" role="switch" aria-label="Approval before file changes" aria-checked="${state.approvalRequired}" data-action="toggle-approval"></button></div><div class="setting-row"><div><h2>No automatic paid fallback</h2><p>A subscription limit should pause the task. Switching to API billing is a separate, explicit choice.</p></div><span class="badge">Always on</span></div><div class="setting-row"><div><h2>Keep the evidence</h2><p>Plans, QA cases, diffs, and test results stay attached to the run and its code reference.</p></div><span class="badge">Always on</span></div><div class="setting-row"><div><h2>One active task at a time</h2><p>Pause, resume, or cancel an active run before starting another. Preset edits never change an active run's snapshot.</p></div><span class="badge gray">1 run</span></div><div class="setting-row"><div><h2>Local storage</h2><p>Presets and runs are saved in local SQLite. API keys stay in runner memory. Reset preserves your projects, skill sources, and project files.</p></div>${button("reset", "Reset workspace", "reset", "small")}</div></section>`;
   }
 
   function showModal(title, body, footer = "", wide = false, eyebrow = "Agent Studio") {
@@ -1117,7 +1129,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       const prompt = values.get("prompt").trim();
       if (!name || !prompt) return toast("Add a name and instructions before saving.");
       const [provider, auth] = values.get("connection").split("|");
-      Object.assign(agent, { name, prompt, provider, auth, model: values.get("model"), tools: values.getAll("tools"), skillBindings: JSON.parse(values.get("skillBindings")) });
+      Object.assign(agent, { name, prompt, provider, auth, model: values.get("model"), permissionLevel: values.get("permissionLevel"), tools: [...form.querySelectorAll('[name="tools"]:checked')].map(input => input.value), skillBindings: JSON.parse(values.get("skillBindings")) });
       persist(); if (modal.open) closeModal(); render(); toast(engine.isActive() ? "Preset saved. The active run keeps its original settings." : "Preset saved. Your next run will use these settings.");
     }
     else if (form.dataset.form === "skill-sources") {
@@ -1142,6 +1154,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
   });
 
   document.addEventListener("change", event => {
+    if (event.target.id === "agent-permission") updatePermissionFields(event.target.closest("form"));
     if (event.target.id === "new-worktree") {
       document.getElementById("worktree-fields").hidden = !event.target.checked;
       document.getElementById("local-branch").hidden = event.target.checked;

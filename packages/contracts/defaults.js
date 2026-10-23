@@ -32,6 +32,7 @@ function initialState() {
       provider: ["planner", "reviewer", "documenter"].includes(role) ? "claude" : "codex",
       model: ["planner", "reviewer", "documenter"].includes(role) ? "default" : "default",
       auth: "subscription",
+      permissionLevel: "ask",
       prompt: prompts[role],
       skillBindings: [],
       tools: ["read", ...(["coder", "documenter"].includes(role) ? ["write"] : []), ...(["coder", "backend", "frontend"].includes(role) ? ["shell"] : []), ...(role === "frontend" ? ["browser"] : [])],

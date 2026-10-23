@@ -18,13 +18,14 @@ const specs = [
   { name: "studio_list", permission: "read", description: "List project files. Hidden and secret files are excluded.", inputSchema: object({ path: string, depth: { type: "integer", minimum: 1, maximum: 3 } }, ["path", "depth"]) },
   { name: "studio_read", permission: "read", description: "Read a UTF-8 project file. Use relative paths. Content is limited to 256 KB.", inputSchema: object({ path: string }, ["path"]) },
   { name: "studio_artifact", permission: "read", description: "Read a previous role's full handoff or recorded evidence by artifact ID. Use offset to read long reports in 16000 character pages.", inputSchema: object({ id: string, offset: { type: "integer", minimum: 0 } }, ["id", "offset"]) },
-  { name: "studio_write", permission: "write", description: "Create or replace a project file with its full contents. Requires run write approval. Never writes secrets or Git internals.", inputSchema: object({ path: string, content: string }, ["path", "content"]) },
+  { name: "studio_write", permission: "write", description: "Create or replace a project file with its full contents. Follows the agent's file-write permission. Never writes secrets or Git internals.", inputSchema: object({ path: string, content: string }, ["path", "content"]) },
   { name: "studio_shell", permission: "shell", description: "Run a shell command in the project sandbox. Set background=true only for a local test server. Do not deploy, push, or target production. Foreground timeout is at most 120 seconds.", inputSchema: object({ command: string, timeoutSeconds: { type: "integer", minimum: 1, maximum: 120 }, background: { type: "boolean" } }, ["command", "timeoutSeconds", "background"]) },
   { name: "studio_http", permission: "shell", description: "Call a loopback test API and record actual status and response. Redirects are not followed. External targets require explicit approval.", inputSchema: object({ url: string, method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }, body: string, headers: { type: "object", additionalProperties: { type: "string" } } }, ["url", "method", "body", "headers"]) },
   { name: "studio_browser", permission: "browser", description: "Use an isolated Playwright Chromium browser for QA. Actions: goto (URL), inspect (text, controls, recent HTTP statuses and errors), fill (selector,value), click (selector), press (selector,value), assertText (wait for value), screenshot. Reuse the same page between calls. Inspect after visible feedback to verify its network status.", inputSchema: object({ action: { type: "string", enum: ["goto", "inspect", "fill", "click", "press", "assertText", "screenshot"] }, selector: string, value: string }, ["action", "selector", "value"]) },
   { name: "studio_load_test", permission: "shell", description: "Run a bounded k6 GET load test against a loopback HTTP endpoint. Maximum 5 virtual users and 10 seconds. Requires the locally installed k6 executable.", inputSchema: object({ url: string, vus: { type: "integer", minimum: 1, maximum: 5 }, seconds: { type: "integer", minimum: 1, maximum: 10 } }, ["url", "vus", "seconds"]) },
 ] as const;
-export const toolSpecs = (step: Step) => specs.filter(spec => step.agent.tools.includes(spec.permission)).map(({ permission, ...spec }) => ({ type: "function", ...spec }));
+export const enabledTools = (step: Step) => step.agent.tools.filter(tool => step.agent.permissionLevel !== "read-only" || tool === "read");
+export const toolSpecs = (step: Step) => specs.filter(spec => enabledTools(step).includes(spec.permission)).map(({ permission, ...spec }) => ({ type: "function", ...spec }));
 const secretPath = (path: string) => path.split(/[\\/]/).some(part => /^\.(git|env|ssh|aws|gnupg|codex|claude|local)$/.test(part) || /^\.env[.]/.test(part) || /(?:credentials|private[._-]?key|\.pem$|\.key$)/i.test(part));
 
 export async function codeReference(cwd: string) {
@@ -70,6 +71,7 @@ export class Toolbox {
   private evidenceBytes = 0;
   readonly frozenFiles = new Map<string, string>();
   constructor(readonly context: Context, readonly artifactDir: string) {}
+  get canWrite() { return enabledTools(this.context.step).includes("write") && (this.context.step.agent.permissionLevel === "project" || this.context.run.approved); }
   private async file(raw: string, create = false) {
     if (raw.length > 4096 || secretPath(raw)) throw new Error("This path is excluded from agent file access.");
     const target = resolve(this.context.run.cwd, raw);
@@ -92,7 +94,7 @@ export class Toolbox {
   }
   async call(name: string, raw: unknown) {
     const spec = specs.find(spec => spec.name === name);
-    if (!spec || !this.context.step.agent.tools.includes(spec.permission)) throw new Error("This tool is not enabled for the agent.");
+    if (!spec || !enabledTools(this.context.step).includes(spec.permission)) throw new Error("This tool is not enabled for the agent.");
     if (this.disposed) throw new Error("The run is no longer accepting tool calls.");
     if (this.receipts.length >= 100 || this.evidenceBytes > 1024 * 1024) throw new Error("This step reached its tool evidence budget. Return a handoff with any remaining work; do not repeat this call.");
     const input = z.record(z.string(), z.unknown()).parse(raw);
@@ -140,7 +142,7 @@ export class Toolbox {
     }
     if (name === "studio_write") {
       const { path, content } = z.object({ path: z.string(), content: z.string().max(256 * 1024) }).parse(input);
-      if (!this.context.run.approved) throw new Error("File writes have not been approved.");
+      if (!this.canWrite) throw new Error("File writes have not been approved.");
       const target = await this.file(path, true);
       await mkdir(dirname(target), { recursive: true });
       if (!contained(this.context.run.cwd, await realpath(dirname(target)))) throw new Error("Symlink escapes the project.");
@@ -150,8 +152,8 @@ export class Toolbox {
     }
     if (name === "studio_shell") {
       const data = z.object({ command: z.string().min(1).max(10000), timeoutSeconds: z.number().int().min(1).max(120), background: z.boolean() }).parse(input);
-      if (!await this.context.approval("shell", "Run this project command?", data.command)) throw new Error("Command was rejected.");
-      const writable = this.context.step.agent.tools.includes("write") && this.context.run.approved;
+      if (this.context.step.agent.permissionLevel !== "project" && !await this.context.approval("shell", "Run this project command?", data.command)) throw new Error("Command was rejected.");
+      const writable = this.canWrite;
       const args = ["sandbox", "-P", "agent-studio-command", "-C", this.context.run.cwd, "-c", `permissions.agent-studio-command.extends=":${writable ? "workspace" : "read-only"}"`, "-c", "permissions.agent-studio-command.network.enabled=true", "--", "/bin/sh", "-c", data.command];
       return this.command(codexBinary, args, data.timeoutSeconds * 1000, data.background);
     }
