@@ -5,7 +5,7 @@ export const bindingSchema = z.object({ id: z.string().min(1).max(100), name: z.
 export const agentSchema = z.object({
   id: z.string().min(1).max(100), role: roleSchema, name: z.string().trim().min(1).max(40),
   provider: z.enum(["codex", "claude"]), auth: z.enum(["subscription", "api"]), model: z.string().min(1).max(100),
-  permissionLevel: z.enum(["ask", "read-only", "project"]).default("ask"),
+  permissionLevel: z.enum(["ask", "read-only", "project", "bypass"]).default("ask"),
   codexFastMode: z.enum(["default", "on", "off"]).default("default"),
   prompt: z.string().trim().min(1).max(20000), tools: z.array(z.enum(["read", "write", "shell", "browser"])).max(4),
   skillBindings: z.array(bindingSchema).max(30).default([]),

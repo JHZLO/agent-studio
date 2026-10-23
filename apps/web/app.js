@@ -341,6 +341,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     ask: { label: "Ask for approval", description: "Uses the workspace file-write approval setting. Each shell command and external HTTP target asks for approval." },
     "read-only": { label: "Read only", description: "Read project files and previous outputs. File writes, shell, HTTP, and browser actions are disabled." },
     project: { label: "Project automation", description: "Selected tools can edit project files and run sandboxed commands with network access without prompts. External HTTP tool targets still ask for approval." },
+    bypass: { label: "Bypass permissions", description: "Skip approval prompts. Enabled tools can access files and network outside the project. Shell commands run without a sandbox using your OS account." },
   };
   function updatePermissionFields(form) {
     const level = form.elements.permissionLevel.value;

@@ -15,12 +15,12 @@ export type Receipt = { id: string; tool: string; input: unknown; output: unknow
 const object = (properties: Wire, required: string[]) => ({ type: "object", properties, required, additionalProperties: false });
 const string = { type: "string" };
 const specs = [
-  { name: "studio_list", permission: "read", description: "List project files. Hidden and secret files are excluded.", inputSchema: object({ path: string, depth: { type: "integer", minimum: 1, maximum: 3 } }, ["path", "depth"]) },
-  { name: "studio_read", permission: "read", description: "Read a UTF-8 project file. Use relative paths. Content is limited to 256 KB.", inputSchema: object({ path: string }, ["path"]) },
+  { name: "studio_list", permission: "read", description: "List files allowed by the agent's permission level. Generated files and symlinks are omitted.", inputSchema: object({ path: string, depth: { type: "integer", minimum: 1, maximum: 3 } }, ["path", "depth"]) },
+  { name: "studio_read", permission: "read", description: "Read a UTF-8 file allowed by the agent's permission level. Relative paths start at the project. Content is limited to 256 KB.", inputSchema: object({ path: string }, ["path"]) },
   { name: "studio_artifact", permission: "read", description: "Read a previous role's full handoff or recorded evidence by artifact ID. Use offset to read long reports in 16000 character pages.", inputSchema: object({ id: string, offset: { type: "integer", minimum: 0 } }, ["id", "offset"]) },
-  { name: "studio_write", permission: "write", description: "Create or replace a project file with its full contents. Follows the agent's file-write permission. Never writes secrets or Git internals.", inputSchema: object({ path: string, content: string }, ["path", "content"]) },
-  { name: "studio_shell", permission: "shell", description: "Run a shell command in the project sandbox. Set background=true only for a local test server. Do not deploy, push, or target production. Foreground timeout is at most 120 seconds.", inputSchema: object({ command: string, timeoutSeconds: { type: "integer", minimum: 1, maximum: 120 }, background: { type: "boolean" } }, ["command", "timeoutSeconds", "background"]) },
-  { name: "studio_http", permission: "shell", description: "Call a loopback test API and record actual status and response. Redirects are not followed. External targets require explicit approval.", inputSchema: object({ url: string, method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }, body: string, headers: { type: "object", additionalProperties: { type: "string" } } }, ["url", "method", "body", "headers"]) },
+  { name: "studio_write", permission: "write", description: "Create or replace a file with its full contents. File access and approval follow the agent's permission level.", inputSchema: object({ path: string, content: string }, ["path", "content"]) },
+  { name: "studio_shell", permission: "shell", description: "Run a shell command with the agent's approval and sandbox settings. Set background=true only for a local test server. Do not deploy, push, or target production unless the task authorizes it. Foreground timeout is at most 120 seconds.", inputSchema: object({ command: string, timeoutSeconds: { type: "integer", minimum: 1, maximum: 120 }, background: { type: "boolean" } }, ["command", "timeoutSeconds", "background"]) },
+  { name: "studio_http", permission: "shell", description: "Call an HTTP test API and record actual status and response. Redirects are not followed. External target approval follows the agent's permission level.", inputSchema: object({ url: string, method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }, body: string, headers: { type: "object", additionalProperties: { type: "string" } } }, ["url", "method", "body", "headers"]) },
   { name: "studio_browser", permission: "browser", description: "Use an isolated Playwright Chromium browser for QA. Actions: goto (URL), inspect (text, controls, recent HTTP statuses and errors), fill (selector,value), click (selector), press (selector,value), assertText (wait for value), screenshot. Reuse the same page between calls. Inspect after visible feedback to verify its network status.", inputSchema: object({ action: { type: "string", enum: ["goto", "inspect", "fill", "click", "press", "assertText", "screenshot"] }, selector: string, value: string }, ["action", "selector", "value"]) },
   { name: "studio_load_test", permission: "shell", description: "Run a bounded k6 GET load test against a loopback HTTP endpoint. Maximum 5 virtual users and 10 seconds. Requires the locally installed k6 executable.", inputSchema: object({ url: string, vus: { type: "integer", minimum: 1, maximum: 5 }, seconds: { type: "integer", minimum: 1, maximum: 10 } }, ["url", "vus", "seconds"]) },
 ] as const;
@@ -71,10 +71,13 @@ export class Toolbox {
   private evidenceBytes = 0;
   readonly frozenFiles = new Map<string, string>();
   constructor(readonly context: Context, readonly artifactDir: string) {}
-  get canWrite() { return enabledTools(this.context.step).includes("write") && (this.context.step.agent.permissionLevel === "project" || this.context.run.approved); }
+  get bypassPermissions() { return this.context.step.agent.permissionLevel === "bypass"; }
+  get canWrite() { return enabledTools(this.context.step).includes("write") && (this.bypassPermissions || this.context.step.agent.permissionLevel === "project" || this.context.run.approved); }
   private async file(raw: string, create = false) {
-    if (raw.length > 4096 || secretPath(raw)) throw new Error("This path is excluded from agent file access.");
+    if (raw.length > 4096) throw new Error("This path exceeds the file access limit.");
     const target = resolve(this.context.run.cwd, raw);
+    if (this.bypassPermissions) return target;
+    if (secretPath(raw)) throw new Error("This path is excluded from agent file access.");
     if (!contained(this.context.run.cwd, target)) throw new Error("Files must stay inside the selected project.");
     let ancestor = target;
     while (!await stat(ancestor).then(() => true, () => false)) {
@@ -89,7 +92,7 @@ export class Toolbox {
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Use an HTTP URL without embedded credentials.");
     const local = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
     if (local && url.port === (process.env.AGENT_STUDIO_PORT || "4183")) throw new Error("QA tools cannot target the Studio control service.");
-    if (!local && (!allowExternal || !await this.context.approval("network", "Allow this test target?", `${url.origin}\nNo production target is permitted.`))) throw new Error("The test target was not approved.");
+    if (!local && (!allowExternal || (!this.bypassPermissions && !await this.context.approval("network", "Allow this test target?", `${url.origin}\nNo production target is permitted.`)))) throw new Error("The test target was not approved.");
     return url;
   }
   async call(name: string, raw: unknown) {
@@ -124,7 +127,7 @@ export class Toolbox {
       const target = await this.file(path), files: string[] = [];
       const walk = async (dir: string, level: number) => {
         for (const entry of await readdir(dir, { withFileTypes: true })) {
-          if (entry.name.startsWith(".") || ["node_modules", "target", "dist", "build"].includes(entry.name) || secretPath(entry.name) || entry.isSymbolicLink()) continue;
+          if ((!this.bypassPermissions && (entry.name.startsWith(".") || secretPath(entry.name))) || ["node_modules", "target", "dist", "build"].includes(entry.name) || entry.isSymbolicLink()) continue;
           const path = join(dir, entry.name); files.push(relative(this.context.run.cwd, path) + (entry.isDirectory() ? "/" : ""));
           if (files.length > 1000) return;
           if (entry.isDirectory() && level > 1) await walk(path, level - 1);
@@ -145,13 +148,14 @@ export class Toolbox {
       if (!this.canWrite) throw new Error("File writes have not been approved.");
       const target = await this.file(path, true);
       await mkdir(dirname(target), { recursive: true });
-      if (!contained(this.context.run.cwd, await realpath(dirname(target)))) throw new Error("Symlink escapes the project.");
+      if (!this.bypassPermissions && !contained(this.context.run.cwd, await realpath(dirname(target)))) throw new Error("Symlink escapes the project.");
       const handle = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o644);
       try { await handle.writeFile(content); } finally { await handle.close(); }
       return { path, bytes: Buffer.byteLength(content), hash: hash(content) };
     }
     if (name === "studio_shell") {
       const data = z.object({ command: z.string().min(1).max(10000), timeoutSeconds: z.number().int().min(1).max(120), background: z.boolean() }).parse(input);
+      if (this.bypassPermissions) return this.command("/bin/sh", ["-c", data.command], data.timeoutSeconds * 1000, data.background);
       if (this.context.step.agent.permissionLevel !== "project" && !await this.context.approval("shell", "Run this project command?", data.command)) throw new Error("Command was rejected.");
       const writable = this.canWrite;
       const args = ["sandbox", "-P", "agent-studio-command", "-C", this.context.run.cwd, "-c", `permissions.agent-studio-command.extends=":${writable ? "workspace" : "read-only"}"`, "-c", "permissions.agent-studio-command.network.enabled=true", "--", "/bin/sh", "-c", data.command];
@@ -198,14 +202,14 @@ export class Toolbox {
       this.browser = await chromium.launch({ headless: true });
       const context = await this.browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: false, serviceWorkers: "block" });
       await context.route("**/*", async route => {
-        try { await this.target(route.request().url(), false); await route.continue(); } catch { await route.abort(); }
+        try { await this.target(route.request().url(), this.bypassPermissions); await route.continue(); } catch { await route.abort(); }
       });
       this.page = await context.newPage(); this.page.setDefaultTimeout(10000);
       this.page.on("response", response => { this.network.push({ url: response.url(), method: response.request().method(), status: response.status() }); this.network = this.network.slice(-40); });
       this.page.on("pageerror", error => { this.browserErrors.push(this.context.redact(error.message)); this.browserErrors = this.browserErrors.slice(-20); });
     }
     const page = this.page!;
-    if (action === "goto") { const url = await this.target(value, false); await page.goto(url.toString(), { waitUntil: "domcontentloaded" }); }
+    if (action === "goto") { const url = await this.target(value, this.bypassPermissions); await page.goto(url.toString(), { waitUntil: "domcontentloaded" }); }
     if (action === "fill") await page.locator(selector).fill(value);
     if (action === "click") await page.locator(selector).click();
     if (action === "press") await page.locator(selector || "body").press(value);
