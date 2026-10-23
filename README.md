@@ -35,8 +35,9 @@ Open **Agent library > Edit agent**. Changes apply to future runs. Active runs k
 | Ask for approval | Uses the workspace file-write approval setting. Each shell command and external HTTP target requests approval. |
 | Read only | Allows selected file-reading and artifact tools. Blocks writes, shell commands, HTTP calls, and browser actions. |
 | Project automation | Pre-approves selected file-write tools and sandboxed shell commands, including command network access. External HTTP tool targets still request approval. |
+| Bypass permissions | Skips approval prompts. Enabled file tools can access paths outside the project, including hidden and secret files. Shell commands run without a sandbox as your OS user. HTTP and browser tools can access external targets. |
 
-Tool checkboxes continue to limit each agent. Read only temporarily disables action tools without losing their selections. Project automation retains project file boundaries and the Codex shell sandbox; it does not grant approval to other agents in the flow.
+Tool checkboxes continue to limit which tools each agent can call. Read only temporarily disables action tools without losing their selections. Project automation retains project file boundaries and the Codex shell sandbox. Bypass permissions applies only to the selected agent and takes effect on the next run; it does not change existing runs or grant approval to other agents. An enabled Shell tool in bypass mode has your OS user's file and network access even if the Write files tool is disabled. Load tests remain limited to loopback targets and their existing load limits.
 
 Codex agents also have **Fast mode**: **Default** follows local Codex settings, **On** requests faster processing, and **Off** explicitly selects standard speed. Studio checks runtime model support before inference and records the selected session tier. Unsupported requests fail with an explanation. Fast mode consumes more subscription usage or incurs higher API pricing; see [OpenAI's speed guide](https://learn.chatgpt.com/docs/agent-configuration/speed). Claude agents do not show this Codex setting.
 

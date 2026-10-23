@@ -33,10 +33,11 @@ The 2026-10-23 binary scan of the patched k6 build found zero affected symbols a
 - API keys stay in runner memory and are redacted from recorded output. Subscription credentials stay with the official CLI.
 - Child environments exclude inherited provider keys and tokens. Codex API authentication uses ephemeral storage; it does not replace the subscription login.
 - Preset permissions restrict Studio tools. Native provider execution, hooks, external MCP tools, and automatic subagents are disabled for Studio turns.
-- Project file tools reject secret paths, escaping paths, and outside symlinks. Selected skill files are read from frozen snapshots.
+- Project file tools reject secret paths, escaping paths, and outside symlinks unless the agent uses Bypass permissions. Selected skill files are read from frozen snapshots.
 - Read-only agents cannot use action tools, even when the run already has file-write approval. The default approval level asks for each shell command. Project automation pre-approves selected project writes and shell commands for that agent, without approving writes for other agents.
-- Shell execution uses the Codex OS sandbox in every permission level that allows shell tools. A permitted command can access resources allowed by that sandbox, including networking. Studio is not a container or a defense against a malicious local user.
-- Browser QA uses an isolated context with loopback-only requests. HTTP external targets need approval. QA tools cannot address the configured Studio control port.
+- Bypass permissions skips write, shell, and external target approvals for that agent. Its enabled file tools can access paths outside the project, including hidden and secret files, and shell commands run directly as the current OS user without the Codex sandbox. Tool selection, output redaction, time limits, and execution evidence remain in effect. Changing a preset does not change an existing run's permission snapshot or approve other agents.
+- Other permission levels run shell commands through the Codex OS sandbox. A permitted command can access resources allowed by that sandbox, including networking. Studio is not a container or a defense against a malicious local user.
+- Browser QA uses an isolated context with loopback-only requests, except Bypass permissions also allows external targets. HTTP external targets need approval unless bypass is selected. QA tools cannot address the configured Studio control port; this restriction does not constrain an unsandboxed shell.
 - k6 is limited to loopback, at most 5 virtual users and 10 seconds, with redirects disabled. Agent turns and commands have time limits. Completed tasks stop their test servers and browsers.
 
 Project files, prompts, skills, model output, and test evidence can contain private content. State is local plaintext protected by filesystem permissions. Do not publish `.local/` or attach its logs to an issue without reviewing them.
