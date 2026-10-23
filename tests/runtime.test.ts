@@ -25,6 +25,27 @@ test("Non-Git fingerprints detect edits and binary replacements", async t => {
   const before = await codeReference(path); await writeFile(join(path, "file.bin"), Buffer.from([0, 2, 2]));
   assert.notEqual(await codeReference(path), before);
 });
+test("Real browser and HTTP tools retain network, accessibility and screenshot evidence", async t => {
+  const path = await directory(t); await mkdir(join(path, "project"));
+  const app = createServer((request, response) => {
+    if (request.url === "/api") { response.writeHead(201, { "content-type": "application/json" }); response.end('{"message":"Saved"}'); return; }
+    if (request.url === "/large") { response.end("a".repeat(100000)); return; }
+    response.setHeader("content-type", "text/html"); response.end('<!doctype html><title>Tool fixture</title><label for="name">Name</label><input id="name" aria-describedby="result"><button id="save">Save</button><p id="result" role="status"></p><script>save.onclick=async()=>{const r=await fetch("/api",{method:"POST"});document.querySelector("#result").textContent=(await r.json()).message}</script>');
+  });
+  const port = await listen(app); t.after(() => close(app));
+  const tools = toolbox(path); t.after(() => tools.close());
+  const call = async (action: string, selector = "", value = "") => { const receipt = await tools.call("studio_browser", { action, selector, value }); assert.equal(receipt.success, true, JSON.stringify(receipt.result)); return receipt.result as any; };
+  await call("goto", "", `http://127.0.0.1:${port}`); await call("fill", "#name", "Reader"); await call("click", "#save");
+  const result = await call("assertText", "", "Saved");
+  assert(result.network.some((entry: any) => entry.method === "POST" && entry.status === 201));
+  assert.deepEqual(result.controls.find((entry: any) => entry.id === "name").labels, ["Name"]);
+  await call("screenshot"); assert.equal(tools.context.run.artifacts[0].mime, "image/png");
+  assert((await readFile(tools.context.run.artifacts[0].mediaPath!)).byteLength > 1000);
+  const large = await tools.call("studio_http", { url: `http://127.0.0.1:${port}/large`, method: "GET", headers: {}, body: "" });
+  assert.equal((large.result as any).body.length, 64000); assert.equal((large.result as any).truncated, true);
+  assert.equal((await tools.call("studio_http", { url: "http://127.0.0.1:4183/api/bootstrap", method: "GET", headers: {}, body: "" })).success, false);
+  assert.equal((await tools.call("studio_http", { url: "https://example.test", method: "GET", headers: {}, body: "" })).success, false);
+});
 test("A recovered Codex host retains identity and stops its owned process", { timeout: 15000 }, async t => {
   const path = await mkdtemp("/tmp/studio-host-");
   const host = await CodexHost.start(join(path, "codex.sock"));

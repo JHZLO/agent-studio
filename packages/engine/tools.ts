@@ -3,6 +3,7 @@ import { constants, createReadStream } from "node:fs";
 import { resolve, join, dirname, relative, isAbsolute } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
+import { chromium, type Browser, type Page } from "@playwright/test";
 import { z } from "zod";
 import { contained, git } from "./projects.ts";
 import { hash } from "./store.ts";
@@ -19,6 +20,8 @@ const specs = [
   { name: "studio_artifact", permission: "read", description: "Read a previous role's full handoff or recorded evidence by artifact ID. Use offset to read long reports in 16000 character pages.", inputSchema: object({ id: string, offset: { type: "integer", minimum: 0 } }, ["id", "offset"]) },
   { name: "studio_write", permission: "write", description: "Create or replace a project file with its full contents. Requires run write approval. Never writes secrets or Git internals.", inputSchema: object({ path: string, content: string }, ["path", "content"]) },
   { name: "studio_shell", permission: "shell", description: "Run a shell command in the project sandbox. Set background=true only for a local test server. Do not deploy, push, or target production. Foreground timeout is at most 120 seconds.", inputSchema: object({ command: string, timeoutSeconds: { type: "integer", minimum: 1, maximum: 120 }, background: { type: "boolean" } }, ["command", "timeoutSeconds", "background"]) },
+  { name: "studio_http", permission: "shell", description: "Call a loopback test API and record actual status and response. Redirects are not followed. External targets require explicit approval.", inputSchema: object({ url: string, method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }, body: string, headers: { type: "object", additionalProperties: { type: "string" } } }, ["url", "method", "body", "headers"]) },
+  { name: "studio_browser", permission: "browser", description: "Use an isolated Playwright Chromium browser for QA. Actions: goto (URL), inspect (text, controls, recent HTTP statuses and errors), fill (selector,value), click (selector), press (selector,value), assertText (wait for value), screenshot. Reuse the same page between calls. Inspect after visible feedback to verify its network status.", inputSchema: object({ action: { type: "string", enum: ["goto", "inspect", "fill", "click", "press", "assertText", "screenshot"] }, selector: string, value: string }, ["action", "selector", "value"]) },
 ] as const;
 export const toolSpecs = (step: Step) => specs.filter(spec => step.agent.tools.includes(spec.permission)).map(({ permission, ...spec }) => ({ type: "function", ...spec }));
 const secretPath = (path: string) => path.split(/[\\/]/).some(part => /^\.(git|env|ssh|aws|gnupg|codex|claude|local)$/.test(part) || /^\.env[.]/.test(part) || /(?:credentials|private[._-]?key|\.pem$|\.key$)/i.test(part));
@@ -58,6 +61,10 @@ export async function codeReference(cwd: string) {
 export class Toolbox {
   readonly receipts: Receipt[] = [];
   private processes = new Set<ChildProcess>();
+  private browser?: Browser;
+  private page?: Page;
+  private network: { url: string; method: string; status: number }[] = [];
+  private browserErrors: string[] = [];
   private disposed = false;
   private evidenceBytes = 0;
   readonly frozenFiles = new Map<string, string>();
@@ -73,6 +80,14 @@ export class Toolbox {
     }
     if (!contained(this.context.run.cwd, await realpath(ancestor))) throw new Error("Symlink escapes the project.");
     return target;
+  }
+  private async target(raw: string, allowExternal = true) {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Use an HTTP URL without embedded credentials.");
+    const local = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+    if (local && url.port === (process.env.AGENT_STUDIO_PORT || "4183")) throw new Error("QA tools cannot target the Studio control service.");
+    if (!local && (!allowExternal || !await this.context.approval("network", "Allow this test target?", `${url.origin}\nNo production target is permitted.`))) throw new Error("The test target was not approved.");
+    return url;
   }
   async call(name: string, raw: unknown) {
     const spec = specs.find(spec => spec.name === name);
@@ -139,6 +154,16 @@ export class Toolbox {
       const args = ["sandbox", "-P", "agent-studio-command", "-C", this.context.run.cwd, "-c", `permissions.agent-studio-command.extends=":${writable ? "workspace" : "read-only"}"`, "-c", "permissions.agent-studio-command.network.enabled=true", "--", "/bin/sh", "-c", data.command];
       return this.command(codexBinary, args, data.timeoutSeconds * 1000, data.background);
     }
+    if (name === "studio_http") {
+      const data = z.object({ url: z.string(), method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]), body: z.string().max(64000), headers: z.record(z.string(), z.string()).refine(headers => !Object.keys(headers).some(key => /^(authorization|cookie|host|proxy-)/i.test(key)), "Credential and routing headers are not accepted by this test tool.") }).parse(input);
+      const url = await this.target(data.url);
+      const response = await fetch(url, { method: data.method, headers: data.headers, body: data.body && data.method !== "GET" ? data.body : undefined, redirect: "manual", signal: AbortSignal.timeout(15000) });
+      const reader = response.body?.getReader(); const chunks: Uint8Array[] = []; let size = 0, truncated = false;
+      if (reader) try { while (true) { const next = await reader.read(); if (next.done) break; chunks.push(next.value.subarray(0, Math.max(0, 64000 - size))); size += next.value.byteLength; if (size > 64000) { truncated = true; break; } } } finally { await reader.cancel(); }
+      const body = Buffer.concat(chunks).toString("utf8");
+      return { url: url.toString(), status: response.status, headers: Object.fromEntries([...response.headers].filter(([key]) => !/cookie|authorization/i.test(key))), body: this.context.redact(body), truncated };
+    }
+    if (name === "studio_browser") return this.browserAction(input);
     throw new Error("Unknown tool.");
   }
   private async command(binary: string, args: string[], timeout: number, background: boolean) {
@@ -156,8 +181,37 @@ export class Toolbox {
       if (background) setTimeout(() => { if (process.exitCode === null && process.pid) { returned = true; resolve({ pid: process.pid, background: true, output: this.context.redact(text), lifetimeSeconds: 600 }); } }, 800);
     });
   }
+  private async browserAction(raw: Wire) {
+    const { action, selector, value } = z.object({ action: z.enum(["goto", "inspect", "fill", "click", "press", "assertText", "screenshot"]), selector: z.string().max(2000), value: z.string().max(10000) }).parse(raw);
+    if (!this.browser) {
+      this.browser = await chromium.launch({ headless: true });
+      const context = await this.browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: false, serviceWorkers: "block" });
+      await context.route("**/*", async route => {
+        try { await this.target(route.request().url(), false); await route.continue(); } catch { await route.abort(); }
+      });
+      this.page = await context.newPage(); this.page.setDefaultTimeout(10000);
+      this.page.on("response", response => { this.network.push({ url: response.url(), method: response.request().method(), status: response.status() }); this.network = this.network.slice(-40); });
+      this.page.on("pageerror", error => { this.browserErrors.push(this.context.redact(error.message)); this.browserErrors = this.browserErrors.slice(-20); });
+    }
+    const page = this.page!;
+    if (action === "goto") { const url = await this.target(value, false); await page.goto(url.toString(), { waitUntil: "domcontentloaded" }); }
+    if (action === "fill") await page.locator(selector).fill(value);
+    if (action === "click") await page.locator(selector).click();
+    if (action === "press") await page.locator(selector || "body").press(value);
+    if (action === "assertText") await page.getByText(value, { exact: false }).first().waitFor({ state: "visible" });
+    if (action === "screenshot") {
+      await mkdir(this.artifactDir, { recursive: true, mode: 0o700 });
+      const id = randomUUID(), mediaPath = join(this.artifactDir, `${id}.png`);
+      await page.screenshot({ path: mediaPath, fullPage: true });
+      const artifact: Artifact = { id, name: `browser-${id.slice(0, 8)}.png`, type: "Screenshot", content: `Captured from ${page.url()}`, agent: this.context.step.agent.name, stepId: this.context.step.id, mediaPath, mime: "image/png", codeReference: await codeReference(this.context.run.cwd), verified: true };
+      this.context.run.artifacts.push(artifact); this.context.save("artifact.created", { id });
+      return { artifactId: id, url: page.url() };
+    }
+    return { url: page.url(), title: await page.title(), text: (await page.locator("body").innerText()).slice(0, 16000), network: this.network, errors: this.browserErrors, controls: await page.locator("input,button,a,select,textarea,[role=status]").evaluateAll(elements => elements.slice(0, 100).map(element => ({ tag: element.tagName, id: element.id, name: element.getAttribute("name"), text: element.textContent?.slice(0, 100), label: element.getAttribute("aria-label"), labels: "labels" in element ? Array.from((element as HTMLInputElement).labels ?? []).map(label => label.textContent) : [], describedBy: element.getAttribute("aria-describedby"), invalid: element.getAttribute("aria-invalid"), role: element.getAttribute("role"), focused: element === document.activeElement, type: element.getAttribute("type") }))) };
+  }
   async close() {
     this.disposed = true;
     for (const child of this.processes) if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch {} }
+    await this.browser?.close();
   }
 }
