@@ -9,6 +9,7 @@ import { SkillCatalog } from "../packages/engine/skills.ts";
 import { inspectProject, prepareProject } from "../packages/engine/projects.ts";
 import { settingsSchema, type Run } from "../packages/contracts/index.ts";
 import { initialState } from "../packages/contracts/defaults.js";
+import { Toolbox } from "../packages/engine/tools.ts";
 
 async function directory(t: test.TestContext) { const path = await realpath(await mkdtemp(join(tmpdir(), "studio-test-"))); t.after(() => rm(path, { recursive: true, force: true })); return path; }
 function initGit(path: string) {
@@ -78,6 +79,23 @@ test("Worktrees preserve source changes and reject stale or existing branch name
   assert.notEqual(prepared.cwd, source); assert.equal(await readFile(join(source, "uncommitted.txt"), "utf8"), "keep me");
   await assert.rejects(inspectProject(source, { mode: "worktree", baseRef: "HEAD", branchName: "test/run" }), /already exists/);
 });
+test("File tools enforce write approval and block escaping paths", async t => {
+  const path = await directory(t), project = join(path, "project"); await mkdir(project);
+  const state = initialState();
+  const step = { id: "step", agent: { ...state.agents[1], provider: "codex", auth: "subscription" }, status: "running", sessionId: "s", messages: [], receivedArtifacts: [] } as Run["steps"][number];
+  const run = { cwd: project, approved: false, artifacts: [], steps: [step] } as unknown as Run;
+  const tools = new Toolbox({ run, step, save: () => {}, approval: async () => false, redact: text => text }, join(path, "artifacts"));
+  assert.equal((await tools.call("studio_write", { path: "a.txt", content: "no" })).success, false);
+  run.approved = true;
+  assert.equal((await tools.call("studio_write", { path: "a.txt", content: "yes" })).success, true);
+  assert.equal(await readFile(join(project, "a.txt"), "utf8"), "yes");
+  assert.equal((await tools.call("studio_write", { path: "../escape.txt", content: "no" })).success, false);
+  await symlink(path, join(project, "escape"));
+  assert.equal((await tools.call("studio_write", { path: "escape/file.txt", content: "no" })).success, false);
+  assert.equal((await tools.call("studio_read", { path: ".env" })).success, false);
+  await tools.close();
+});
+
 test("History lists remain small while complete conversations stay retrievable", async t => {
   const path = await directory(t), store = new Store(join(path, "state.sqlite")); t.after(() => store.close());
   const settings = settingsSchema.parse(initialState()); store.set("settings", settings);
