@@ -14,7 +14,8 @@
     "probe:codex": "node --import tsx scripts/probe-codex.ts",
     "audit:k6": "node scripts/audit-k6.mjs",
     "runner": "node --import tsx apps/runner/main.ts",
-    "stop": "node --import tsx scripts/stop.ts"
+    "stop": "node --import tsx scripts/stop.ts",
+    "terminal": "node --import tsx scripts/terminal.ts"
   },
   "dependencies": {
     "@openai/codex": "0.163.0",

@@ -13,6 +13,7 @@ import { folders, inspectProject, prepareProject, git } from "./projects.ts";
 import { Connections } from "./connections.ts";
 import { CodexHost, RpcError, accountFingerprint, claudeBinary, runtimeEnvironment, type Wire } from "./codex.ts";
 import { Toolbox, toolSpecs, codeReference, type Receipt } from "./tools.ts";
+import { openTerminal, terminalCall } from "./terminals.ts";
 
 const resultSchema = z.object({ summary: z.string().min(1).max(16000), status: z.enum(["completed", "blocked"]), artifacts: z.array(z.object({ name: z.string().regex(/^[a-zA-Z0-9_-]+\.(md|json|txt)$/), type: z.string().max(80), content: z.string().max(64000) })).max(12) });
 const requirements: Record<string, string> = { planner: "Return implementation-plan.md and qa-sheet.md with acceptance criteria and expected results BEFORE coding.", coder: "Implement the plan. Return implementation.md explaining real changed files and verification. The runner captures the actual diff.", reviewer: "Inspect the real diff. Return review.md with severity, file, line, impact, and evidence. Do not edit the project.", backend: "Execute API edge cases from the QA sheet using studio_http or approved commands. Return api-report.json with expected and actual results and tool receipt IDs. A claim without a tool result is not evidence. Run a bounded k6 test only if the task requests load testing.", frontend: "Use studio_browser to execute the QA sheet against a local app. Capture at least one screenshot. Return browser-qa.md with expected and actual results and receipt IDs. If the app cannot be opened, return blocked.", documenter: "Update relevant project documentation using verified results. Return handoff.md with changes, evidence, code reference, and remaining limitations." };
@@ -84,6 +85,7 @@ export class Studio {
     if (method === "run.read") return this.getRun(input.id);
     if (method === "run.control") return this.control(input);
     if (method === "run.reconcile") return this.reconcile(input.id);
+    if (method.startsWith("terminal.")) return this.terminal(method, input);
     if (method === "artifact") {
       const run = this.getRun(input.runId), artifact = run.artifacts.find(a => a.id === input.id);
       if (!artifact) throw new Error("Artifact not found.");
@@ -388,6 +390,42 @@ export class Studio {
     } else if (input.action !== "pause") throw new Error("Unknown run control.");
     return structuredClone(run);
   }
+  private async terminal(method: string, input: Wire) {
+    const run = this.getRun(input.id);
+    if (method === "terminal.open") {
+      if (run !== this.active || run.status !== "paused" || run.controlMode !== "studio" || run.approval || run.steps.some(s => s.activeTurnId)) throw new Error("Pause at a step boundary and resolve approvals before opening the terminal.");
+      const step = run.steps.find(s => s.id === input.stepId);
+      if (!step || step.agent.provider !== "codex" || !step.providerThreadId) throw new Error("Select a started Codex session.");
+      run.controlMode = "switching"; this.save(run, "control.switching");
+      try {
+        if (run.terminal) await terminalCall(run, "terminal.dispose", {}).catch(() => {});
+        run.terminal = await openTerminal(run, step, this.dataDir, this.socketDir);
+        run.controlMode = "terminal"; run.note = "Codex terminal controls this session. Automatic steps are paused.";
+        this.save(run, "control.terminal", { threadId: step.providerThreadId }); return run;
+      } catch (error) { run.controlMode = "studio"; this.save(run, "control.failed"); throw error; }
+    }
+    if (method === "terminal.close") {
+      if (run.approval || run.steps.some(s => s.activeTurnId)) throw new Error("Finish or interrupt the terminal turn and resolve its approvals first.");
+      await terminalCall(run, "terminal.close", {});
+      let exited = false;
+      for (let i = 0; i < 50; i++) { const state = await terminalCall(run, "terminal.read", { after: 0 }); if (state.exited) { exited = true; break; } await new Promise(resolve => setTimeout(resolve, 100)); }
+      if (!exited) throw new Error("The terminal is still connected. Studio control has not resumed.");
+      const step = run.steps.find(s => s.id === run.terminal?.stepId)!;
+      const host = this.hosts.get(`${run.id}-${step.agent.auth}`);
+      if (!host) throw new Error("The shared runtime needs reconciliation before Studio can resume.");
+      const { thread } = await host.client.call("thread/read", { threadId: step.providerThreadId, includeTurns: true });
+      if (thread.id !== step.providerThreadId || thread.turns.some((turn: Wire) => turn.status === "inProgress")) throw new Error("The provider still has an active turn. Studio control has not resumed.");
+      const current = await codeReference(run.cwd);
+      for (const artifact of run.artifacts) if (artifact.codeReference && artifact.codeReference !== current) artifact.stale = true;
+      await terminalCall(run, "terminal.dispose", {}).catch(() => {});
+      run.controlMode = "studio"; run.status = "paused"; run.terminal!.connected = false;
+      run.note = "Terminal disconnected. Review any changed evidence, then resume the workflow.";
+      this.save(run, "control.studio", { codeReference: current }); return run;
+    }
+    if (!["terminal.read", "terminal.input", "terminal.resize"].includes(method)) throw new Error("Unknown terminal operation.");
+    if (method === "terminal.input" && run.controlMode !== "terminal") throw new Error("Studio owns this session.");
+    return terminalCall(run, method, input);
+  }
   private async reconcile(id: string) {
     const run = this.getRun(id);
     if (run.status !== "needs_reconciliation") throw new Error("This run does not need reconciliation.");
@@ -433,6 +471,7 @@ export class Studio {
       const timer = setTimeout(() => child.kill("SIGKILL"), 3000);
       await exited; clearTimeout(timer);
     }
+    if (this.active?.terminal) { await terminalCall(this.active, "terminal.dispose", {}).catch(() => {}); this.active.terminal.connected = false; }
     this.mcpCapabilities.clear();
     for (const toolbox of this.tools.values()) await toolbox.close(); this.tools.clear();
     for (const host of this.hosts.values()) await host.stop(); this.hosts.clear();
