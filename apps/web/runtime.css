@@ -25,6 +25,10 @@ dialog[open].agent-editor { display: flex; flex-direction: column; overflow: hid
 .agent-editor .modal-head h2 { overflow-wrap: anywhere; }
 .agent-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 20px; }
 .agent-form .field { min-width: 0; align-content: start; }
+.agent-field-heading { display: flex; align-items: center; gap: 12px; min-height: 32px; }
+.agent-field-heading .btn { margin-left: auto; }
+.agent-editor .binding-heading { justify-content: flex-start; flex-wrap: wrap; gap: 12px; }
+.agent-field-heading .btn, .agent-editor .binding-heading .btn { flex: none; min-height: 32px; padding: 5px 10px; font-size: 11px; color: var(--ink-2); }
 .agent-fast-field[hidden] { display: none; }
 .agent-form .agent-name-field, .agent-form .prompt-field, .agent-form .skill-binding-field, .agent-form .agent-tools-field, .agent-form .context-chip { grid-column: 1 / -1; }
 .agent-form .prompt-field textarea { min-height: 140px; }
