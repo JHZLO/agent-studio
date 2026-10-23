@@ -9,7 +9,8 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "setup": "node scripts/install-native.mjs"
+    "setup": "node scripts/install-native.mjs",
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@openai/codex": "0.163.0",
