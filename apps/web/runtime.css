@@ -25,6 +25,7 @@ dialog[open].agent-editor { display: flex; flex-direction: column; overflow: hid
 .agent-editor .modal-head h2 { overflow-wrap: anywhere; }
 .agent-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 20px; }
 .agent-form .field { min-width: 0; align-content: start; }
+.agent-fast-field[hidden] { display: none; }
 .agent-form .agent-name-field, .agent-form .prompt-field, .agent-form .skill-binding-field, .agent-form .agent-tools-field, .agent-form .context-chip { grid-column: 1 / -1; }
 .agent-form .prompt-field textarea { min-height: 140px; }
 @media (max-width: 600px) { .agent-form { grid-template-columns: minmax(0, 1fr); } }

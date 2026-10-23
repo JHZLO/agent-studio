@@ -11,7 +11,7 @@ import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
 import { folders, inspectProject, prepareProject, projectInstructions, git } from "./projects.ts";
 import { Connections } from "./connections.ts";
-import { CodexHost, RpcError, accountFingerprint, claudeBinary, runtimeEnvironment, type Wire } from "./codex.ts";
+import { CodexHost, RpcError, accountFingerprint, claudeBinary, runtimeEnvironment, supportsFastMode, type Wire } from "./codex.ts";
 import { Toolbox, toolSpecs, enabledTools, codeReference, type Receipt } from "./tools.ts";
 import { openTerminal, terminalCall } from "./terminals.ts";
 import { LocalHistory } from "./local-history.ts";
@@ -306,13 +306,22 @@ export class Studio {
     const host = await this.codexHost(run, step);
     const { config } = await host.client.call("config/read", { cwd: run.cwd, includeLayers: false });
     const disabledMcp = Object.fromEntries(Object.keys(config.mcp_servers ?? {}).map(name => [name, { enabled: false }]));
+    const fastMode = step.agent.codexFastMode ?? "default";
     const started = await host.client.call("thread/start", {
       cwd: run.cwd, model: step.agent.model === "default" ? null : step.agent.model, modelProvider: "openai", sandbox: "read-only", approvalPolicy: "untrusted", approvalsReviewer: "user", ephemeral: false,
+      ...(fastMode === "default" ? {} : { serviceTier: fastMode === "on" ? "fast" : "default" }),
       developerInstructions: "Use the Studio tools to act. Follow their permission checks. Native execution is disabled. Produce a structured handoff based on recorded evidence.", dynamicTools: toolSpecs(step),
-      config: { mcp_servers: disabledMcp, "features.shell_tool": false, "features.unified_exec": false, "features.code_mode": false, "features.apply_patch_freeform": false, "features.stable_environment_tools": false, "features.view_image": false, "features.browser_use": false, "features.computer_use": false },
+      config: { mcp_servers: disabledMcp, "features.shell_tool": false, "features.unified_exec": false, "features.code_mode": false, "features.apply_patch_freeform": false, "features.stable_environment_tools": false, "features.view_image": false, "features.browser_use": false, "features.computer_use": false, ...(fastMode === "on" ? { "features.fast_mode": true } : {}) },
     });
     step.providerThreadId = started.thread.id; step.actualModel = started.model;
+    step.actualServiceTier = started.serviceTier ?? undefined;
     this.save(run, "session.started", { stepId: step.id, providerThreadId: step.providerThreadId });
+    if (fastMode === "on") {
+      const { data } = await host.client.call("model/list", {});
+      if (!supportsFastMode(data.find((model: Wire) => (model.model || model.id) === started.model))) throw new Error(`${started.model} does not report Fast mode support. Select Off or Default, or refresh the model catalog.`);
+      if (!["fast", "priority"].includes(started.serviceTier)) throw new Error("Codex did not enable the requested Fast mode. Check the connection before retrying.");
+    }
+    if (fastMode === "off" && started.serviceTier && started.serviceTier !== "default") throw new Error("Codex did not select standard speed. Check the connection before retrying.");
     const result = new Promise<Wire>((resolve, reject) => this.turns.set(step.providerThreadId!, { resolve, reject }));
     const timer = setTimeout(() => {
       void host.client.call("turn/interrupt", { threadId: step.providerThreadId, turnId: step.activeTurnId }).catch(() => {});

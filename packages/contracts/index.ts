@@ -6,6 +6,7 @@ export const agentSchema = z.object({
   id: z.string().min(1).max(100), role: roleSchema, name: z.string().trim().min(1).max(40),
   provider: z.enum(["codex", "claude"]), auth: z.enum(["subscription", "api"]), model: z.string().min(1).max(100),
   permissionLevel: z.enum(["ask", "read-only", "project"]).default("ask"),
+  codexFastMode: z.enum(["default", "on", "off"]).default("default"),
   prompt: z.string().trim().min(1).max(20000), tools: z.array(z.enum(["read", "write", "shell", "browser"])).max(4),
   skillBindings: z.array(bindingSchema).max(30).default([]),
 });
@@ -31,14 +32,14 @@ export type Agent = z.infer<typeof agentSchema> & { skillSnapshots?: Binding[] }
 export type Binding = z.infer<typeof bindingSchema> & { sourcePath?: string };
 export type Project = z.infer<typeof projectSchema>;
 export type SubscriptionUsage = { status: "available" | "unavailable"; checkedAt: string; windows: { label: string; remainingPercent: number; resetsAt?: string }[]; message?: string };
-export type Connection = { id: string; provider: "codex" | "claude"; auth: "subscription" | "api"; connected: boolean; models: string[]; modelDetails?: { value: string; displayName: string; resolvedModel?: string }[]; account?: { email?: string; plan?: string; organization?: string }; usage?: SubscriptionUsage; checkedAt?: string; error?: string; version?: string; billingMode: string; credentialStorage?: string };
+export type Connection = { id: string; provider: "codex" | "claude"; auth: "subscription" | "api"; connected: boolean; models: string[]; modelDetails?: { value: string; displayName: string; resolvedModel?: string; supportsFastMode?: boolean }[]; account?: { email?: string; plan?: string; organization?: string }; usage?: SubscriptionUsage; checkedAt?: string; error?: string; version?: string; billingMode: string; credentialStorage?: string };
 export type Status = "queued" | "running" | "waiting_approval" | "paused" | "cancelling" | "cancelled" | "succeeded" | "failed" | "needs_reconciliation";
 export type Message = { id: string; type: "assistant" | "user" | "tool" | "system"; text: string; time: string };
 export type LocalProject = { key: string; name: string; path: string; providers: ("codex" | "claude")[]; available: boolean };
 export type LocalSession = { key: string; provider: "codex" | "claude"; sourceId: string; title: string; projectKey: string; cwd: string; updatedAt: string };
 export type ImportedSession = LocalSession & { project: Project; importedAt: string; messages: Message[]; truncated: boolean };
 export type Artifact = { id: string; name: string; type: string; content: string; agent: string; stepId: string; codeReference?: string; mediaPath?: string; mime?: string; verified?: boolean; stale?: boolean };
-export type Step = { id: string; agent: Agent; status: Status; sessionId: string; messages: Message[]; receivedArtifacts: { id: string; name: string }[]; providerThreadId?: string; activeTurnId?: string; lastTurnId?: string; socketPath?: string; hostPid?: number; connectionGeneration?: string; accountFingerprint?: string; actualModel?: string; codeReference?: string; usage?: Record<string, unknown>; finalText?: string; completedAt?: string };
+export type Step = { id: string; agent: Agent; status: Status; sessionId: string; messages: Message[]; receivedArtifacts: { id: string; name: string }[]; providerThreadId?: string; activeTurnId?: string; lastTurnId?: string; socketPath?: string; hostPid?: number; connectionGeneration?: string; accountFingerprint?: string; actualModel?: string; actualServiceTier?: string; codeReference?: string; usage?: Record<string, unknown>; finalText?: string; completedAt?: string };
 export type Approval = { id: string; stepId: string; kind: "write" | "shell" | "network" | "provider"; description: string; details: string; generation?: string; requestId?: string | number; method?: string };
 export type Run = { id: string; brief: string; project: Project; projectRules?: string[]; flow: z.infer<typeof flowSchema>; status: Status; createdAt: string; completedAt?: string; index: number; steps: Step[]; artifacts: Artifact[]; note: string; cwd: string; baseHead: string | null; approvalRequired: boolean; approval?: Approval; approved: boolean; pauseRequested: boolean; controlMode: "studio" | "terminal" | "switching"; eventSeq: number; terminal?: { id: string; stepId: string; connected: boolean; socketPath?: string; pid?: number }; commandId: string };
 export const activeStatuses: Status[] = ["queued", "running", "waiting_approval", "paused", "cancelling", "needs_reconciliation"];

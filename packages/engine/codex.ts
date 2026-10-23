@@ -12,6 +12,10 @@ export const root = resolve(import.meta.dirname, "../..");
 export const codexBinary = resolve(root, "node_modules/.bin/codex");
 export const claudeBinary = resolve(root, "node_modules/.bin/claude");
 export const accountFingerprint = (account: Wire, apiKey?: string) => createHash("sha256").update(JSON.stringify({ type: account.type, identity: apiKey ?? account.email ?? account.id ?? "unknown" })).digest("hex");
+export function supportsFastMode(model?: Wire) {
+  const tiers = Array.isArray(model?.serviceTiers) ? model.serviceTiers.map(tier => tier.id) : model?.additionalSpeedTiers ?? [];
+  return Array.isArray(tiers) && tiers.some(tier => tier === "fast" || tier === "priority");
+}
 
 export function runtimeEnvironment() {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TMP|TEMP|LANG|LC_.*|TERM|COLORTERM|SSH_AUTH_SOCK|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|SYSTEMROOT|COMSPEC)$/.test(key)));

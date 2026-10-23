@@ -317,7 +317,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
 
   function stepSettings(agent) {
     const index = currentFlow().workflow.indexOf(agent.id);
-    return `<div class="step-settings"><div class="step-order"><span class="field-label">Step order</span><strong>${index + 1} of ${currentFlow().workflow.length}</strong></div><div class="step-controls">${button("move-up", "Earlier", "up", "small", 'aria-label="Move step earlier"', index === 0 || engine.isActive())}${button("move-down", "Later", "down", "small", 'aria-label="Move step later"', index === currentFlow().workflow.length - 1 || engine.isActive())}</div><dl class="definition-list"><dt>Connection</dt><dd>${providerName(agent.provider)} / ${authName(agent.auth)}</dd><dt>Model</dt><dd>${escape(agent.model)}</dd><dt>Permissions</dt><dd>${permissionLevels[agent.permissionLevel || "ask"].label}</dd><dt>Skills</dt><dd>${agent.skillBindings.length} attached</dd></dl><p class="meta">Edit this agent's instructions, model, skills, and tools in the Agent library.</p>${button("edit-agent", "Edit in Agent library", "edit", "full", `data-id="${escape(agent.id)}"`)}<div class="step-remove">${button("remove-step", "Remove from flow", "trash", "text small", "", engine.isActive())}<p class="meta">The agent stays in your library.</p></div></div>`;
+    return `<div class="step-settings"><div class="step-order"><span class="field-label">Step order</span><strong>${index + 1} of ${currentFlow().workflow.length}</strong></div><div class="step-controls">${button("move-up", "Earlier", "up", "small", 'aria-label="Move step earlier"', index === 0 || engine.isActive())}${button("move-down", "Later", "down", "small", 'aria-label="Move step later"', index === currentFlow().workflow.length - 1 || engine.isActive())}</div><dl class="definition-list"><dt>Connection</dt><dd>${providerName(agent.provider)} / ${authName(agent.auth)}</dd><dt>Model</dt><dd>${escape(agent.model)}</dd><dt>Permissions</dt><dd>${permissionLevels[agent.permissionLevel || "ask"].label}</dd>${agent.provider === "codex" ? `<dt>Fast mode</dt><dd>${{ default: "Follow Codex", on: "On", off: "Off" }[agent.codexFastMode || "default"]}</dd>` : ""}<dt>Skills</dt><dd>${agent.skillBindings.length} attached</dd></dl><p class="meta">Edit this agent's instructions, model, skills, and tools in the Agent library.</p>${button("edit-agent", "Edit in Agent library", "edit", "full", `data-id="${escape(agent.id)}"`)}<div class="step-remove">${button("remove-step", "Remove from flow", "trash", "text small", "", engine.isActive())}<p class="meta">The agent stays in your library.</p></div></div>`;
   }
 
   function editAgent(id, form = null) {
@@ -334,6 +334,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       modal.querySelector("#agent-editor-fields").replaceWith(form);
       form.querySelector('[data-action="choose-skills"]').focus();
     } else modal.querySelector("#agent-name").focus();
+    updateFastModeFields(modal.querySelector("#agent-preset-form"));
   }
 
   const permissionLevels = {
@@ -346,11 +347,24 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     form.querySelector("#permission-description").textContent = permissionLevels[level].description;
     for (const input of form.querySelectorAll('[name="tools"]')) input.disabled = level === "read-only" && input.value !== "read";
   }
+  function updateFastModeFields(form) {
+    const [provider, auth] = form.elements.connection.value.split("|");
+    const field = form.querySelector(".agent-fast-field"), select = form.elements.codexFastMode;
+    field.hidden = provider !== "codex"; select.disabled = field.hidden;
+    const connection = state.connections.find(item => item.id === `${provider}-${auth}`);
+    const model = connection?.modelDetails?.find(item => item.value === form.elements.model.value);
+    const unsupported = provider === "codex" && model?.supportsFastMode === false;
+    select.querySelector('[value="on"]').disabled = unsupported && select.value !== "on";
+    select.setCustomValidity(unsupported && select.value === "on" ? "This model does not support Fast mode. Select Off or Default." : "");
+    form.querySelector("#fast-description").textContent = unsupported ? "This model does not report Fast mode support. Select Off or Default." : select.value === "off" ? "Use standard speed, even if your local Codex default is Fast." : select.value === "default" ? "Follow the local Codex settings for this project." : `${auth === "subscription" ? "Uses more of your subscription limit." : "Uses higher API pricing."} Availability is checked when the task starts.`;
+    enhanceSelects(form);
+  }
   function agentForm(agent) {
     return `<form id="agent-preset-form" class="agent-form" data-form="agent" data-id="${escape(agent.id)}"><div class="field agent-name-field"><label for="agent-name">Name</label><input id="agent-name" name="name" value="${escape(agent.name)}" maxlength="40" required></div>
       <div class="field prompt-field"><label for="agent-prompt">Instructions</label><textarea id="agent-prompt" name="prompt" rows="4" maxlength="2500" required>${escape(agent.prompt)}</textarea></div>
       <div class="field"><label for="agent-connection">AI connection</label><select id="agent-connection" name="connection">${["codex", "claude"].flatMap(provider => ["subscription", "api"].map(auth => `<option value="${provider}|${auth}"${selected(`${agent.provider}|${agent.auth}`, `${provider}|${auth}`)}>${providerName(provider)} / ${authName(auth)}</option>`)).join("")}</select></div>
       <div class="field"><label for="agent-model">Model</label><select id="agent-model" name="model">${modelOptions(agent.provider, agent.auth, agent.model)}</select><small>Models come from your connection. Aliases follow runtime updates; Default uses the runtime selection.</small>${button("refresh-models", "Refresh models", "reset", "text small")}</div>
+      <div class="field agent-fast-field"${agent.provider === "codex" ? "" : " hidden"}><label for="agent-fast-mode">Fast mode</label><select id="agent-fast-mode" name="codexFastMode" aria-describedby="fast-description">${[["default", "Default - follow Codex"], ["on", "On - faster responses"], ["off", "Off - standard speed"]].map(([value, label]) => `<option value="${value}"${selected(agent.codexFastMode || "default", value)}>${label}</option>`).join("")}</select><small id="fast-description"></small></div>
       <div class="field"><label for="agent-permission">Permission level</label><select id="agent-permission" name="permissionLevel" aria-describedby="permission-description">${Object.entries(permissionLevels).map(([value, level]) => `<option value="${value}"${selected(agent.permissionLevel || "ask", value)}>${level.label}</option>`).join("")}</select><small id="permission-description">${permissionLevels[agent.permissionLevel || "ask"].description}</small></div>
       <div class="field skill-binding-field">${bindingField(agent.skillBindings || [])}</div>
       <div class="field agent-tools-field"><span class="field-label">Allowed tools</span><div class="checks">${[["read", "Read files"], ["write", "Write files"], ["shell", "Shell"], ["browser", "Browser"]].map(([value, label]) => `<label class="check"><input type="checkbox" name="tools" value="${value}"${agent.tools.includes(value) ? " checked" : ""}>${label}</label>`).join("")}</div></div>
@@ -561,7 +575,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
 
   function handoffView(step, run) {
     const outputs = run.artifacts.filter(artifact => artifact.stepId === step.id);
-    return `<div class="handoff-card"><h3>A small handoff, with the full evidence nearby.</h3><p><strong>Goal:</strong> ${escape(run.brief)}<br><strong>Context:</strong> a new session, not the previous conversation.<br><strong>Inputs:</strong> ${step.receivedArtifacts.length ? step.receivedArtifacts.map(item => escape(item.name)).join(", ") : "The task brief and project rules."}<br><strong>Code reference:</strong> ${escape(step.codeReference || "Pending")}<br><strong>Studio session:</strong> ${escape(step.sessionId)}<br><strong>Provider thread:</strong> ${escape(step.providerThreadId || "Not started")}<br><strong>Instructions snapshot:</strong> ${escape(step.agent.prompt)}</p></div><div class="snapshot-list"><h3>Skill versions for this run</h3>${(step.agent.skillSnapshots || []).map(binding => `<button class="snapshot-row" data-action="skill-snapshot" data-id="${escape(binding.id)}">${icon("file")}<span><strong>${escape(binding.name)}</strong><small>${escape(binding.version.slice(0, 12))} / ${binding.fileCount} ${binding.fileCount === 1 ? "file" : "files"}</small></span>${icon("chevron")}</button>`).join("") || '<p class="meta">No skills attached when this run started.</p>'}</div><div style="margin-top:20px"><p class="eyebrow" style="margin-bottom:12px">Outputs from this step</p>${outputs.length ? `<div class="artifact-list">${outputs.map(artifactRow).join("")}</div>` : '<p class="meta">Artifacts appear after this step completes.</p>'}</div>`;
+    return `<div class="handoff-card"><h3>A small handoff, with the full evidence nearby.</h3><p><strong>Goal:</strong> ${escape(run.brief)}<br><strong>Context:</strong> a new session, not the previous conversation.<br><strong>Inputs:</strong> ${step.receivedArtifacts.length ? step.receivedArtifacts.map(item => escape(item.name)).join(", ") : "The task brief and project rules."}<br><strong>Code reference:</strong> ${escape(step.codeReference || "Pending")}<br><strong>Studio session:</strong> ${escape(step.sessionId)}<br><strong>Provider thread:</strong> ${escape(step.providerThreadId || "Not started")}<br><strong>Permissions:</strong> ${permissionLevels[step.agent.permissionLevel || "ask"].label}<br>${step.agent.provider === "codex" ? `<strong>Fast mode:</strong> ${{ default: "Follow Codex", on: "On", off: "Off" }[step.agent.codexFastMode || "default"]}${step.actualServiceTier ? ` (runtime tier: ${escape(step.actualServiceTier)})` : ""}<br>` : ""}<strong>Instructions snapshot:</strong> ${escape(step.agent.prompt)}</p></div><div class="snapshot-list"><h3>Skill versions for this run</h3>${(step.agent.skillSnapshots || []).map(binding => `<button class="snapshot-row" data-action="skill-snapshot" data-id="${escape(binding.id)}">${icon("file")}<span><strong>${escape(binding.name)}</strong><small>${escape(binding.version.slice(0, 12))} / ${binding.fileCount} ${binding.fileCount === 1 ? "file" : "files"}</small></span>${icon("chevron")}</button>`).join("") || '<p class="meta">No skills attached when this run started.</p>'}</div><div style="margin-top:20px"><p class="eyebrow" style="margin-bottom:12px">Outputs from this step</p>${outputs.length ? `<div class="artifact-list">${outputs.map(artifactRow).join("")}</div>` : '<p class="meta">Artifacts appear after this step completes.</p>'}</div>`;
   }
 
   function artifactRow(artifact) {
@@ -1023,6 +1037,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
         if (!connection.connected) throw new Error(connection.error || "Connect this account in Connections first.");
         if (form.isConnected && form.elements.connection.value === `${provider}|${auth}`) {
           form.elements.model.innerHTML = modelOptions(provider, auth, form.elements.model.value);
+          updateFastModeFields(form);
           enhanceSelects(form);
         }
         toast(`${connection.models.length} models reported by your runtime.`);
@@ -1129,7 +1144,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       const prompt = values.get("prompt").trim();
       if (!name || !prompt) return toast("Add a name and instructions before saving.");
       const [provider, auth] = values.get("connection").split("|");
-      Object.assign(agent, { name, prompt, provider, auth, model: values.get("model"), permissionLevel: values.get("permissionLevel"), tools: [...form.querySelectorAll('[name="tools"]:checked')].map(input => input.value), skillBindings: JSON.parse(values.get("skillBindings")) });
+      Object.assign(agent, { name, prompt, provider, auth, model: values.get("model"), permissionLevel: values.get("permissionLevel"), codexFastMode: form.elements.codexFastMode.value, tools: [...form.querySelectorAll('[name="tools"]:checked')].map(input => input.value), skillBindings: JSON.parse(values.get("skillBindings")) });
       persist(); if (modal.open) closeModal(); render(); toast(engine.isActive() ? "Preset saved. The active run keeps its original settings." : "Preset saved. Your next run will use these settings.");
     }
     else if (form.dataset.form === "skill-sources") {
@@ -1170,6 +1185,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       event.target.closest("form").querySelector('[name="model"]').innerHTML = modelOptions(provider, event.target.value.split("|")[1]);
       enhanceSelects(event.target.closest("form"));
     }
+    if (["agent-connection", "agent-model", "agent-fast-mode"].includes(event.target.id)) updateFastModeFields(event.target.closest("form"));
     if (event.target.id === "connection-provider") { ui.connectProvider = event.target.value; connectionModal(); }
   });
   document.addEventListener("input", event => {

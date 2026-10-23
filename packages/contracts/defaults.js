@@ -33,6 +33,7 @@ function initialState() {
       model: ["planner", "reviewer", "documenter"].includes(role) ? "default" : "default",
       auth: "subscription",
       permissionLevel: "ask",
+      codexFastMode: "default",
       prompt: prompts[role],
       skillBindings: [],
       tools: ["read", ...(["coder", "documenter"].includes(role) ? ["write"] : []), ...(["coder", "backend", "frontend"].includes(role) ? ["shell"] : []), ...(role === "frontend" ? ["browser"] : [])],

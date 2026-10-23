@@ -1,0 +1,87 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { createServer } from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
+import { chromium, expect } from "@playwright/test";
+import { initialState } from "../packages/contracts/defaults.js";
+import { settingsSchema } from "../packages/contracts/index.ts";
+import { Store } from "../packages/engine/store.ts";
+
+test("Agent settings save permissions and Fast mode through the UI without losing drafts", { timeout: 45000 }, async t => {
+  const root = await mkdtemp(join(tmpdir(), "studio-agent-ui-"));
+  const store = new Store(join(root, "studio.sqlite")), settings = settingsSchema.parse(initialState());
+  settings.skillRoots = []; settings.agents[1].model = "supported";
+  store.set("settings", settings);
+  store.set("connections", [{ id: "codex-subscription", provider: "codex", auth: "subscription", connected: false, billingMode: "Subscription", models: ["supported", "unsupported"], modelDetails: [{ value: "supported", displayName: "Supported model", supportsFastMode: true }, { value: "unsupported", displayName: "Unsupported model", supportsFastMode: false }] }]);
+  store.close();
+  const reserve = createServer(); await new Promise<void>(resolve => reserve.listen(0, "127.0.0.1", resolve));
+  const port = (reserve.address() as { port: number }).port; await new Promise<void>(resolve => reserve.close(() => resolve()));
+  const api = spawn(process.execPath, ["--import", "tsx", "apps/server/main.ts"], { cwd: process.cwd(), env: { ...process.env, AGENT_STUDIO_DATA_DIR: root, AGENT_STUDIO_PORT: String(port), CODEX_HOME: join(root, "codex"), CLAUDE_CONFIG_DIR: join(root, "claude") }, stdio: "ignore" });
+  const browser = await chromium.launch();
+  t.after(async () => {
+    await browser.close(); api.kill("SIGTERM");
+    try { process.kill(JSON.parse(await readFile(join(root, "runner.lock"), "utf8")).pid, "SIGTERM"); } catch {}
+    for (let i = 0; i < 50; i++) { try { await readFile(join(root, "runner.lock")); await delay(100); } catch { break; } }
+    await rm(root, { recursive: true, force: true });
+  });
+  const origin = `http://127.0.0.1:${port}`;
+  let ready = false;
+  for (let i = 0; i < 100; i++) { try { if ((await fetch(origin + "/api/bootstrap")).ok) { ready = true; break; } } catch {} await delay(100); }
+  assert(ready, "The test API must start");
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } }); page.setDefaultTimeout(5000);
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  await page.goto(origin);
+  const openAgent = async () => {
+    await page.locator('[data-action="navigate"][data-view="agents"]').click();
+    await page.locator('[data-action="edit-agent"][data-id="coder"]').click();
+  };
+  const choose = async (name: string, value: string) => {
+    await page.getByRole("combobox", { name, exact: true }).click();
+    await page.getByRole("option", { name: value, exact: true }).click();
+  };
+  const saved = async () => (await (await page.request.get(origin + "/api/state")).json()).agents.find((agent: { id: string }) => agent.id === "coder");
+  await openAgent();
+  await choose("Permission level", "Project automation");
+  await choose("Fast mode", "On - faster responses");
+  await page.getByRole("button", { name: "Choose skills", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[name="permissionLevel"]')).toHaveValue("project");
+  await expect(page.locator('[name="codexFastMode"]')).toHaveValue("on");
+  await page.getByRole("button", { name: "Save agent", exact: true }).click();
+  await expect.poll(async () => ({ permission: (await saved()).permissionLevel, fast: (await saved()).codexFastMode })).toEqual({ permission: "project", fast: "on" });
+  await page.reload(); await openAgent();
+  await expect(page.locator('[name="permissionLevel"]')).toHaveValue("project");
+  await expect(page.locator('[name="codexFastMode"]')).toHaveValue("on");
+  await choose("Permission level", "Read only");
+  await expect(page.locator('[name="tools"][value="write"]')).toBeDisabled();
+  await expect(page.locator('[name="tools"][value="shell"]')).toBeDisabled();
+  await expect(page.locator('[name="tools"][value="read"]')).toBeEnabled();
+  await choose("Model", "Unsupported model");
+  await page.getByRole("button", { name: "Save agent", exact: true }).click();
+  await expect(page.locator("#modal")).toBeVisible();
+  assert.equal((await saved()).permissionLevel, "project");
+  await choose("Fast mode", "Off - standard speed");
+  await page.getByRole("button", { name: "Save agent", exact: true }).click();
+  await expect.poll(async () => (await saved()).permissionLevel).toBe("read-only");
+  assert.equal((await saved()).codexFastMode, "off"); assert((await saved()).tools.includes("write"));
+  await openAgent();
+  await choose("AI connection", "Claude Code / Subscription");
+  await expect(page.getByRole("combobox", { name: "Fast mode", exact: true })).toBeHidden();
+  await choose("AI connection", "Codex / Subscription");
+  await expect(page.getByRole("combobox", { name: "Fast mode", exact: true })).toBeVisible();
+  await expect(page.locator('[name="codexFastMode"]')).toHaveValue("off");
+  await choose("Permission level", "Ask for approval");
+  await expect(page.locator('[name="tools"][value="write"]')).toBeEnabled();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await openAgent(); await expect(page.locator('[name="permissionLevel"]')).toHaveValue("read-only");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const modal = await page.locator("#modal").boundingBox(); assert(modal && modal.x >= 0 && modal.x + modal.width <= 390);
+  await page.getByRole("combobox", { name: "Permission level", exact: true }).click();
+  await expect(page.getByRole("option", { name: "Project automation", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape"); await expect(page.locator("#modal")).toBeVisible();
+  assert.deepEqual(errors, []);
+});

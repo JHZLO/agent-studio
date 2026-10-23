@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { join } from "node:path";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { CodexHost, claudeBinary, codexBinary, runtimeEnvironment } from "./codex.ts";
+import { CodexHost, claudeBinary, codexBinary, runtimeEnvironment, supportsFastMode, type Wire } from "./codex.ts";
 import { now, type Agent, type Connection, type SubscriptionUsage } from "../contracts/index.ts";
 import { Store } from "./store.ts";
 const exec = promisify(execFile);
@@ -103,6 +103,7 @@ export class Connections {
         const { data } = await host.client.call("model/list", {});
         const available = data.map((model: { id: string; model?: string }) => model.model || model.id);
         connection.models = input.auth === "subscription" ? available : available.filter((model: string) => connection.models.includes(model));
+        connection.modelDetails = data.filter((model: Wire) => connection.models.includes(model.model || model.id)).map((model: Wire) => ({ value: model.model || model.id, displayName: model.displayName || model.model || model.id, supportsFastMode: supportsFastMode(model) }));
         if (input.auth === "subscription") {
           connection.account = { email: label(account.email), plan: label(account.planType) };
           try { connection.usage = subscriptionUsage("codex", await host.client.call("account/rateLimits/read", {}, 15000)); }
