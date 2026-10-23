@@ -70,11 +70,23 @@ export class Connections {
         const result = await exec(claudeBinary, ["auth", "status"], { env: runtimeEnvironment(), timeout: 15000 });
         const status = JSON.parse(result.stdout);
         if (!status.loggedIn || status.authMethod !== "claude.ai") throw new Error("Sign in to Claude Code with your subscription first.");
-        connection.models = ["sonnet", "opus", "haiku"];
+        connection.modelDetails = await this.claudeModels();
+        connection.models = connection.modelDetails.map(model => model.value);
       }
       connection.connected = true;
     } catch (error) { connection.error = this.redact((error as Error).message); }
     return this.save(connection);
+  }
+  private async claudeModels() {
+    const requestId = randomUUID();
+    const execution = exec(claudeBinary, ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", "", "--settings", '{"disableAllHooks":true}'], { cwd: this.socketDir, env: runtimeEnvironment(), timeout: 20000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024 });
+    // Initialization returns the CLI catalog without submitting an inference prompt.
+    execution.child.stdin!.end(JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "initialize" } }) + "\n");
+    const { stdout } = await execution;
+    const events = stdout.split("\n").filter(line => line.trim()).map(line => JSON.parse(line));
+    const response = events.find(event => event.type === "control_response" && event.response?.request_id === requestId)?.response;
+    if (response?.subtype !== "success") throw new Error("Claude Code could not report its model catalog. Check the connection again.");
+    return z.array(z.object({ value: z.string().min(1).max(100), displayName: z.string().min(1).max(200), resolvedModel: z.string().max(100).optional() })).min(1).max(200).parse(response.response?.models);
   }
   async login(provider: "codex" | "claude") {
     if (provider === "codex") {

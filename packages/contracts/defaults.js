@@ -9,7 +9,7 @@ const roles = {
 
 const models = {
   codex: ["default"],
-  claude: ["default", "sonnet", "opus", "haiku"],
+  claude: ["default"],
 };
 
 const prompts = {

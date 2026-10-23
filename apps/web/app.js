@@ -315,7 +315,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     return `<form class="inspector-form" data-form="agent" data-id="${escape(agent.id)}"><div class="field"><label for="agent-name">Name</label><input id="agent-name" name="name" value="${escape(agent.name)}" maxlength="40" required></div>
       <div class="field prompt-field"><label for="agent-prompt">Instructions</label><textarea id="agent-prompt" name="prompt" rows="4" maxlength="2500" required>${escape(agent.prompt)}</textarea></div>
       <div class="field"><label for="agent-connection">AI connection</label><select id="agent-connection" name="connection">${["codex", "claude"].flatMap(provider => ["subscription", "api"].map(auth => `<option value="${provider}|${auth}"${selected(`${agent.provider}|${agent.auth}`, `${provider}|${auth}`)}>${providerName(provider)} / ${authName(auth)}</option>`)).join("")}</select></div>
-      <div class="field"><label for="agent-model">Model</label><select id="agent-model" name="model">${modelOptions(agent.provider, agent.auth).map(model => `<option${selected(agent.model, model)}>${model}</option>`).join("")}</select><small>Models reported by the selected connection. Default uses the runtime selection.</small></div>
+      <div class="field"><label for="agent-model">Model</label><select id="agent-model" name="model">${modelOptions(agent.provider, agent.auth, agent.model)}</select><small>Models come from your connection. Aliases follow runtime updates; Default uses the runtime selection.</small>${button("refresh-models", "Refresh models", "reset", "text small")}</div>
       <div class="field skill-binding-field">${bindingField(agent.skillBindings || [])}</div>
       <div class="field"><span class="field-label">Allowed tools</span><div class="checks">${[["read", "Read files"], ["write", "Write files"], ["shell", "Shell"], ["browser", "Browser"]].map(([value, label]) => `<label class="check"><input type="checkbox" name="tools" value="${value}"${agent.tools.includes(value) ? " checked" : ""}>${label}</label>`).join("")}</div></div>
       <div class="context-chip">${icon("leaf")}New session per step. Only the brief, decisions, and artifact references carry forward.</div><button type="submit" class="btn primary full">${icon("check")}Save preset</button>
@@ -381,8 +381,17 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     showModal("Local skill folders", `<p>Use one folder per line. A folder can contain SKILL.md directly, or contain one folder per skill. Links to the same skill are merged.</p><form data-form="skill-sources"><label class="field-label" for="skill-roots">Folder paths</label><textarea id="skill-roots" name="roots" rows="5" spellcheck="false">${escape(catalog.roots.join("\n"))}</textarea><div class="source-list">${catalog.sources.map(source => `<div><code>${escape(source.label)}</code><span class="badge ${source.status === "available" ? "gray" : "amber"}">${source.status === "available" ? `${source.count} found` : "Unavailable"}</span></div>`).join("")}</div><p class="meta">Folders stay on this computer. This scans instructions and supporting text files, without running scripts.</p><button type="submit" class="btn primary full">Scan folders</button></form>`, "", true, "Skill sources");
   }
 
-  function modelOptions(provider, auth) {
-    return [...new Set(["default", ...(state.connections.find(item => item.provider === provider && item.auth === auth)?.models || models[provider])])];
+  function modelOptions(provider, auth, current = "default") {
+    const connection = state.connections.find(item => item.provider === provider && item.auth === auth);
+    const available = [...new Set(["default", ...(connection?.models || models[provider])])];
+    const values = [...new Set([...available, current])];
+    return values.map(value => {
+      const details = connection?.modelDetails?.find(model => model.value === value);
+      let label = details?.displayName || value;
+      if (value === "default" && details?.resolvedModel) label += ` - ${connection.modelDetails.find(model => model.value !== "default" && model.resolvedModel === details.resolvedModel)?.displayName || details.resolvedModel}`;
+      if (!available.includes(value)) label += " (saved selection; refresh to check availability)";
+      return `<option value="${escape(value)}"${selected(current, value)}>${escape(label)}</option>`;
+    }).join("");
   }
 
   async function checkConnection(provider, auth, apiKey) {
@@ -859,6 +868,17 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
       ui.selected = id; ui.zoom = null; ui.view = "team";
       closeModal(); persist(); render(); toast("Agent added to the workflow.");
     }
+    else if (action === "refresh-models") {
+      const form = target.closest("form"), [provider, auth] = form.elements.connection.value.split("|");
+      target.disabled = true;
+      try {
+        const connection = await checkConnection(provider, auth);
+        if (!connection.connected) throw new Error(connection.error || "Connect this account in Connections first.");
+        if (form.isConnected && form.elements.connection.value === `${provider}|${auth}`) form.elements.model.innerHTML = modelOptions(provider, auth, form.elements.model.value);
+        toast(`${connection.models.length} models reported by your runtime.`);
+      } catch (error) { toast(error.message); }
+      finally { target.disabled = false; }
+    }
     else if (action === "connect") connectionModal();
     else if (action === "auth-mode") { ui.connectAuth = target.dataset.auth; connectionModal(); }
     else if (action === "connect-account") {
@@ -981,7 +1001,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     }
     if (event.target.id === "agent-connection") {
       const provider = event.target.value.split("|")[0];
-      event.target.closest("form").querySelector('[name="model"]').innerHTML = modelOptions(provider, event.target.value.split("|")[1]).map(model => `<option>${model}</option>`).join("");
+      event.target.closest("form").querySelector('[name="model"]').innerHTML = modelOptions(provider, event.target.value.split("|")[1]);
     }
     if (event.target.id === "connection-provider") { ui.connectProvider = event.target.value; connectionModal(); }
   });
