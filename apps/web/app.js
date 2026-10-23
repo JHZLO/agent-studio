@@ -1,5 +1,5 @@
 import { roles, models, prompts, initialState, initializeFlows } from "../../packages/contracts/defaults.js";
-import { initial, StudioEngine, request, queueSettings, flush, reset, removeProject, saveStatus } from "./runtime.js";
+import { initial, StudioEngine, request, queueSettings, flush, reset, removeProject, importLocal, saveStatus } from "./runtime.js";
 import "./skills.js";
 import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js";
 import { enhanceSelects, closeSelects } from "./selects.js";
@@ -13,6 +13,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
   for (const agent of state.agents) agent.skillBindings ??= [];
   initializeFlows(state);
   state.projects ??= [];
+  state.importedSessions ??= [];
   state.activeProjectId ??= state.projects[0]?.id || null;
   const catalog = new window.SkillCatalog();
 
@@ -23,6 +24,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", editingAgentId: null, starting: false,
     navigationOpen: false, navigationActions: false,
     projectDraft: null, folderRequest: null, folderListing: null,
+    importCatalog: null, importRequest: null, importProjects: new Set(), importedSession: null,
   };
   let toastTimer;
   let connectionTimer;
@@ -170,8 +172,8 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       <div class="workspace-label"><span class="workspace-dot"></span>Personal workspace<span class="workspace-tag">LOCAL</span></div>
       <nav class="nav" aria-label="Main navigation">
         ${navItem("home", "New task", "plus")}
-        <div class="nav-group" role="group" aria-label="Work"><div class="nav-label">Work</div>${navItem("runs", "Tasks", "clock", state.history.length + (state.run ? 1 : 0))}</div>
-        <div class="nav-group project-nav" role="group" aria-label="Projects"><div class="project-nav-heading"><span class="nav-label">Projects</span><button class="nav-control" data-action="new-project" aria-label="Create project" title="Create project">${icon("plus")}</button></div>${state.projects.map(project => `<button class="nav-item project-item ${ui.view === "home" && project.id === state.activeProjectId ? "project-current" : ""}" data-action="select-project" data-id="${escape(project.id)}" aria-label="Open project ${escape(project.name)}" title="${escape(project.path)}">${icon("folder")}<span class="nav-item-label">${escape(project.name)}</span></button>`).join("") || `<button class="nav-item" data-action="new-project" aria-label="Add project" title="Add project">${icon("folder")}<span class="nav-item-label">Add project</span></button>`}</div>
+        <div class="nav-group" role="group" aria-label="Work"><div class="nav-label">Work</div>${navItem("runs", "Tasks", "clock", state.history.length + (state.run ? 1 : 0))}${state.importedSessions.length ? navItem("imported", "Imported sessions", "message", state.importedSessions.length) : ""}</div>
+        <div class="nav-group project-nav" role="group" aria-label="Projects"><div class="project-nav-heading"><span class="nav-label">Projects</span><div class="project-nav-actions"><button class="nav-control" data-action="import-local" aria-label="Import local projects" title="Import local projects">${icon("download")}</button><button class="nav-control" data-action="new-project" aria-label="Create project" title="Create project">${icon("plus")}</button></div></div>${state.projects.map(project => `<button class="nav-item project-item ${ui.view === "home" && project.id === state.activeProjectId ? "project-current" : ""}" data-action="select-project" data-id="${escape(project.id)}" aria-label="Open project ${escape(project.name)}" title="${escape(project.path)}">${icon("folder")}<span class="nav-item-label">${escape(project.name)}</span></button>`).join("") || `<button class="nav-item" data-action="new-project" aria-label="Add project" title="Add project">${icon("folder")}<span class="nav-item-label">Add project</span></button>`}</div>
         <div class="nav-group" role="group" aria-label="Build"><div class="nav-label">Build</div>${navItem("team", "Flows", "flow")}${navItem("agents", "Agent library", "agents")}${navItem("skills", "Skill library", "grid")}</div>
         <div class="nav-group" role="group" aria-label="Settings"><div class="nav-label">Settings</div>${navItem("connections", "Connections", "plug")}${navItem("defaults", "Defaults", "sliders")}</div>
       </nav><div class="sidebar-bottom"><div class="sidebar-actions"><button class="nav-utility" data-action="help" aria-label="How Agent Studio works" title="Quick guide">${icon("help")}<span>Quick guide</span></button><button class="nav-control" data-action="navigation-actions" aria-label="Workspace actions" title="Workspace actions" aria-expanded="${ui.navigationActions}" aria-controls="navigation-actions">${icon("more")}</button><div id="navigation-actions" class="navigation-actions" ${ui.navigationActions ? "" : "hidden"}><span class="nav-label">Workspace controls</span><button class="nav-reset" data-action="reset" aria-label="Reset workspace">${icon("reset")}<span>Reset workspace<small>Clear presets and run history</small></span></button></div></div>
@@ -213,9 +215,9 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
     const preserved = live ? [document.getElementById("task-brief")] : [];
     const scrollPositions = live ? [...document.querySelectorAll(".session-content, .evidence-body, .run-steps, .canvas-viewport, .sidebar")].map(element => [element.className, element.scrollTop, element.scrollLeft]) : [];
-    const viewNames = { home: "New task", team: "Flows", run: "Task details", agents: "Agent library", skills: "Skill library", connections: "AI connections", runs: "Tasks", defaults: "Workspace defaults" };
+    const viewNames = { home: "New task", team: "Flows", run: "Task details", agents: "Agent library", skills: "Skill library", connections: "AI connections", runs: "Tasks", imported: "Imported sessions", defaults: "Workspace defaults" };
     const entering = renderedView !== ui.view;
-    app.innerHTML = `<div class="shell ${state.navigationCollapsed ? "sidebar-collapsed" : ""} ${ui.navigationOpen ? "navigation-open" : ""}">${sidebar()}<div class="main" tabindex="-1"><header class="topbar"><div class="crumbs">Workspace ${icon("chevron")}<strong>${viewNames[ui.view]}</strong></div><span class="prototype-pill">${icon("terminal")}Local workspace<span class="topbar-avatar">J</span></span></header><main id="main-content" class="page page-${ui.view}${entering ? " page-enter" : ""}">${ui.view === "home" ? homeView() : ui.view === "team" ? teamView() : ui.view === "run" ? runView() : ui.view === "agents" ? agentsView() : ui.view === "skills" ? skillsView() : ui.view === "connections" ? connectionsView() : ui.view === "runs" ? runsView() : defaultsView()}</main></div></div>`;
+    app.innerHTML = `<div class="shell ${state.navigationCollapsed ? "sidebar-collapsed" : ""} ${ui.navigationOpen ? "navigation-open" : ""}">${sidebar()}<div class="main" tabindex="-1"><header class="topbar"><div class="crumbs">Workspace ${icon("chevron")}<strong>${viewNames[ui.view]}</strong></div><span class="prototype-pill">${icon("terminal")}Local workspace<span class="topbar-avatar">J</span></span></header><main id="main-content" class="page page-${ui.view}${entering ? " page-enter" : ""}">${ui.view === "home" ? homeView() : ui.view === "team" ? teamView() : ui.view === "run" ? runView() : ui.view === "agents" ? agentsView() : ui.view === "skills" ? skillsView() : ui.view === "connections" ? connectionsView() : ui.view === "runs" ? runsView() : ui.view === "imported" ? importedSessionsView() : defaultsView()}</main></div></div>`;
     const terminalElement = document.getElementById("studio-terminal");
     if (terminalElement && retainedTerminal?.dataset.session === terminalElement.dataset.session) terminalElement.replaceWith(retainedTerminal);
     if (terminalElement) mountTerminal(currentRun().id, document.getElementById("studio-terminal")); else closeTerminalView();
@@ -450,6 +452,53 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       (runs.length ? `<section class="panel"><table class="history-table"><thead><tr><th>TASK</th><th>STATUS</th><th>OUTPUTS</th><th></th></tr></thead><tbody>${runs.map(run => `<tr><td><strong>${escape(run.brief)}</strong><small>${escape(run.id)} / ${escape(run.flow?.name || "Feature delivery")}</small></td><td>${statusBadge(run.status)}</td><td>${run.artifactCount ?? run.artifacts.length} files</td><td>${button("open-run", "Open task", "arrow", "text small", `data-id="${run.id}"`)}</td></tr>`).join("")}</tbody></table></section>` : emptyState("clock", "Your first task starts here", "Describe a task and choose your team. Follow its progress, approvals, and outputs here.", button("navigate", "New task", "plus", "primary", 'data-view="home"')));
   }
 
+  function importedSessionsView() {
+    return heading("Imported <em>sessions</em>", "Conversation snapshots from your local Codex and Claude Code history.", button("import-local", "Import local projects", "download", "primary")) +
+      (state.importedSessions.length ? `<section class="panel"><table class="history-table"><thead><tr><th>SESSION / PROJECT</th><th>SOURCE</th><th>MESSAGES</th><th></th></tr></thead><tbody>${state.importedSessions.map(session => `<tr><td><strong>${escape(session.title)}</strong><small>${escape(session.project.name)} / ${escape(session.updatedAt.slice(0, 10))}</small></td><td>${providerName(session.provider)}</td><td>${session.messageCount}${session.truncated ? "+" : ""}</td><td>${button("open-imported-session", "Read session", "arrow", "text small", `data-id="${escape(session.key)}"`)}</td></tr>`).join("")}</tbody></table></section>` : emptyState("message", "No saved snapshots", "New imports add project folders to your workspace.", button("import-local", "Import local projects", "download")));
+  }
+
+  async function localImportModal() {
+    const pending = Symbol(); ui.importRequest = pending;
+    ui.importProjects = new Set(); ui.importCatalog = null;
+    showModal("Import local projects", '<p id="local-import-loading" role="status">Finding local projects...</p>', button("close-modal", "Cancel", ""), true, "");
+    try {
+      const found = await request("/api/local/scan", {});
+      if (ui.importRequest !== pending || !modal.open || !document.getElementById("local-import-loading")) return;
+      ui.importCatalog = found;
+      showModal("Import local projects", `<p>Select folders to add to Projects. Conversation history stays in Codex or Claude Code.</p><div class="import-filters"><div class="field"><label for="local-import-query">Search projects</label><input id="local-import-query" type="search" placeholder="Project name or folder path"></div><div class="field"><label for="local-import-provider">Source</label><select id="local-import-provider"><option value="all">All sources</option><option value="codex">Codex</option><option value="claude">Claude Code</option></select></div></div>${found.warnings.map(warning => `<p class="form-error">${escape(warning)}</p>`).join("")}<div id="local-import-list" class="import-list"></div><p id="local-import-error" class="form-error" role="alert" hidden></p>`, '<span id="local-import-count" class="meta" role="status"></span>' + button("close-modal", "Cancel", "") + button("confirm-local-import", "Import projects", "download", "primary", "", true), true, "");
+      modal.classList.add("import-dialog");
+      renderLocalImportList(); document.getElementById("local-import-query").focus({ preventScroll: true });
+    } catch (error) {
+      const loading = document.getElementById("local-import-loading");
+      if (ui.importRequest === pending && loading) { loading.textContent = error.message; loading.setAttribute("role", "alert"); }
+    }
+  }
+
+  function renderLocalImportList() {
+    const panel = document.getElementById("local-import-list");
+    if (!panel || !ui.importCatalog) return;
+    const focus = document.activeElement, scrollTop = panel.scrollTop, modalScrollTop = modal.scrollTop;
+    const focusedProject = focus && panel.contains(focus) ? focus.dataset.importProject : null;
+    const query = document.getElementById("local-import-query").value.trim().toLowerCase(), provider = document.getElementById("local-import-provider").value;
+    const groups = ui.importCatalog.projects.flatMap(project => {
+      if (!project.available || (provider !== "all" && !project.providers.includes(provider))) return [];
+      if (!`${project.name} ${project.path}`.toLowerCase().includes(query)) return [];
+      const registered = state.projects.some(item => item.path === project.path);
+      return [`<label class="import-project"><input type="checkbox" data-import-project="${escape(project.key)}" aria-label="Import project ${escape(project.name)}" ${ui.importProjects.has(project.key) ? "checked" : ""} ${registered ? "disabled" : ""}><span><strong>${escape(project.name)}</strong><small>${escape(project.path)}</small><small>${project.providers.map(providerName).join(" / ")}${registered ? " / Already in Studio" : ""}</small></span></label>`];
+    });
+    panel.innerHTML = groups.join("") || '<p class="project-empty">No matching local projects with an available folder.</p>';
+    const count = ui.importProjects.size;
+    document.getElementById("local-import-count").textContent = `${count} ${count === 1 ? "project" : "projects"} selected${count > 100 ? " - select at most 100 projects" : ""}`;
+    modal.querySelector('[data-action="confirm-local-import"]').disabled = !count || count > 100;
+    if (focusedProject) [...panel.querySelectorAll("input")].find(input => input.dataset.importProject === focusedProject)?.focus({ preventScroll: true });
+    panel.scrollTop = scrollTop; modal.scrollTop = modalScrollTop;
+  }
+
+  function importedSessionModal(session) {
+    ui.importedSession = session;
+    showModal(escape(session.title), `<p>${providerName(session.provider)} / ${escape(session.project.name)}<br><span class="project-path">${escape(session.cwd)}</span></p><p class="meta">Snapshot imported ${escape(session.importedAt.slice(0, 10))}. The original session remains in its source app.${session.truncated ? " This snapshot reached the 5,000 message or 2 MB text limit and contains only the beginning of the conversation." : ""}</p><div class="import-conversation">${session.messages.map(message => `<article class="message ${message.type}"><div class="message-meta">${escape(message.type)} / ${escape(message.time ? message.time.slice(0, 16).replace("T", " ") : "Time unavailable")}</div><pre class="import-message">${escape(message.text)}</pre></article>`).join("")}</div><p class="meta">${session.messages.length} of ${session.total} messages</p>`, button("close-modal", "Close", "") + (session.nextOffset !== null ? button("more-imported-messages", "Load more messages", "down") : ""), true, "Imported conversation");
+  }
+
   function emptyState(iconName, title, description, action = "") {
     return `<section class="panel empty"><div class="empty-icon">${icon(iconName)}</div><h2>${title}</h2><p>${description}</p>${action}</section>`;
   }
@@ -542,6 +591,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     ui.editingAgentId = null;
     ui.folderRequest = null;
     modal.close();
+    ui.importRequest = null;
     ui.pickerDraft = null; ui.pickerTarget = null;
     if (lastFocused?.isConnected) lastFocused.focus();
   }
@@ -585,7 +635,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
   }
 
   function projectPicker() {
-    showModal("Projects", `<div class="project-list">${state.projects.map(project => `<div class="project-row"><button class="project-choice" data-action="select-project" data-id="${escape(project.id)}">${icon("folder")}<span><strong>${escape(project.name)}</strong><span>${escape(project.path)}</span></span>${project.id === state.activeProjectId ? icon("check") : ""}</button>${button("remove-project", "", "trash", "small icon-only danger", `data-id="${escape(project.id)}" aria-label="Remove ${escape(project.name)}" title="${engine.isActive() && engine.run.project.id === project.id ? "Finish or cancel the active task first" : "Remove project from Studio"}"`, engine.isActive() && engine.run.project.id === project.id)}</div>`).join("") || '<p class="project-empty">No projects yet.</p>'}</div><p class="meta">Removing a project preserves its files, worktrees and task history.</p>`, button("new-project", "Create project", "plus", "primary"), false, "");
+    showModal("Projects", `<div class="project-list">${state.projects.map(project => `<div class="project-row"><button class="project-choice" data-action="select-project" data-id="${escape(project.id)}">${icon("folder")}<span><strong>${escape(project.name)}</strong><span>${escape(project.path)}</span></span>${project.id === state.activeProjectId ? icon("check") : ""}</button>${button("remove-project", "", "trash", "small icon-only danger", `data-id="${escape(project.id)}" aria-label="Remove ${escape(project.name)}" title="${engine.isActive() && engine.run.project.id === project.id ? "Finish or cancel the active task first" : "Remove project from Studio"}"`, engine.isActive() && engine.run.project.id === project.id)}</div>`).join("") || '<p class="project-empty">No projects yet.</p>'}</div><p class="meta">Removing a project preserves its files, worktrees and task history.</p>`, button("import-local", "Import local projects", "download") + button("new-project", "Create project", "plus", "primary"), false, "");
   }
 
   function projectModal() {
@@ -595,7 +645,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       return;
     }
     const draft = ui.projectDraft;
-    showModal("Create project", `<form id="project-form" data-form="project"><div class="field"><label for="project-name">Project name</label><input id="project-name" name="name" value="${escape(draft.name)}" maxlength="60" placeholder="Project name" required></div><div class="field"><label for="project-path">Source folder</label><div class="source-folder"><div class="folder-input-row">${icon("folder")}<input id="project-path" name="path" value="${escape(draft.path)}" placeholder="/path/to/project" required></div>${button("browse-folders", draft.path ? "Change folder" : "Choose folder", "plus", "")}</div></div><p id="project-error" class="form-error" role="alert" hidden></p></form>`, button("close-modal", "Cancel", "") + '<button type="submit" form="project-form" class="btn primary">Create project</button>', false, "");
+    showModal("Create project", `<form id="project-form" data-form="project"><div class="field"><label for="project-name">Project name</label><input id="project-name" name="name" value="${escape(draft.name)}" maxlength="60" placeholder="Project name" required></div><div class="field"><label for="project-path">Source folder</label><div class="source-folder"><div class="folder-input-row">${icon("folder")}<input id="project-path" name="path" value="${escape(draft.path)}" placeholder="/path/to/project" required></div>${button("browse-folders", draft.path ? "Change folder" : "Choose folder", "plus", "")}</div></div><p id="project-error" class="form-error" role="alert" hidden></p></form>`, button("import-local", "Import local projects", "download") + button("close-modal", "Cancel", "") + '<button type="submit" form="project-form" class="btn primary">Create project</button>', false, "");
     document.getElementById("project-name").focus();
   }
 
@@ -772,6 +822,26 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     else if (action === "close-navigation") closeNavigation();
     else if (action === "navigation-actions") { ui.navigationActions = !ui.navigationActions; render(true); }
     else if (action === "project-picker") projectPicker();
+    else if (action === "import-local") await localImportModal();
+    else if (action === "confirm-local-import") {
+      target.disabled = true;
+      const errorBox = document.getElementById("local-import-error"); errorBox.hidden = true;
+      try {
+        const result = await importLocal({ projects: [...ui.importProjects], sessions: [] });
+        state.projects = result.projects; state.activeProjectId = result.activeProjectId; state.importedSessions = result.importedSessions;
+        if (errorBox.isConnected) closeModal(); ui.view = "home"; ui.historyId = null; render();
+        toast(`Imported ${result.addedProjects} ${result.addedProjects === 1 ? "project" : "projects"}.`);
+      } catch (error) { if (errorBox.isConnected) { errorBox.textContent = error.message; errorBox.hidden = false; target.disabled = false; } else toast(error.message); }
+    }
+    else if (action === "open-imported-session" || action === "more-imported-messages") {
+      target.disabled = true;
+      try {
+        const previous = action === "more-imported-messages" ? ui.importedSession : null;
+        const session = await request("/api/local/read", { key: previous?.key || id, offset: previous?.nextOffset || 0 });
+        if (previous) session.messages = [...previous.messages, ...session.messages];
+        importedSessionModal(session);
+      } catch (error) { toast(error.message); target.disabled = false; }
+    }
     else if (action === "remove-project") {
       const project = state.projects.find(item => item.id === id);
       if (!project) return;
@@ -1015,6 +1085,20 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       engine = new StudioEngine(onRunChange);
       ui.view = "home"; ui.selected = null; ui.historyId = null; ui.linkFrom = null; ui.zoom = null; ui.artifactId = null; ui.pendingOrder = null;
       persist(); closeModal(); render(); toast("A fresh studio is ready.");
+    }
+  });
+
+  document.addEventListener("input", event => {
+    if (event.target.id === "local-import-query") renderLocalImportList();
+  });
+  document.addEventListener("change", event => {
+    const input = event.target;
+    if (input.id === "local-import-provider") renderLocalImportList();
+    if (input.dataset.importProject) {
+      const key = input.dataset.importProject;
+      if (input.checked) ui.importProjects.add(key);
+      else ui.importProjects.delete(key);
+      renderLocalImportList();
     }
   });
 

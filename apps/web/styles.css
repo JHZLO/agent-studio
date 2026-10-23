@@ -267,6 +267,7 @@ input:disabled { color: var(--muted); background: var(--cream); }
 
 /* Projects, folders and environment dialogs */
 .project-nav-heading { display: flex; align-items: center; justify-content: space-between; }
+.project-nav-actions { display: flex; align-items: center; gap: 4px; }
 .project-nav-heading .nav-label { padding-bottom: 0; }
 .project-nav-heading .nav-control { min-height: 24px; height: 24px; width: 24px; padding: 4px; }
 .project-item .nav-item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

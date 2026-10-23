@@ -37,3 +37,20 @@ dialog[open].agent-editor { display: flex; flex-direction: column; overflow: hid
 .quota-window strong { white-space: nowrap; font-size: 15px; }
 .quota-window meter { display: block; width: 100%; height: 16px; margin: 6px 0; }
 .quota-window small, .usage-checked { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.import-filters { display: grid; grid-template-columns: 1fr 160px; gap: 14px; }
+dialog[open].import-dialog { display: flex; flex-direction: column; overflow: hidden; }
+.import-dialog .modal-head, .import-dialog .modal-footer { flex: none; }
+.import-dialog .modal-body { min-height: 0; overflow: auto; }
+.import-list { margin-top: 16px; max-height: 48vh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; }
+.import-project { display: flex; align-items: start; gap: 12px; padding: 14px; cursor: pointer; }
+.import-project + .import-project { border-top: 1px dashed var(--line); }
+.import-project:has(input:checked) { background: var(--sky); }
+.import-project:has(input:disabled) { opacity: .65; cursor: default; }
+.import-project input { flex: none; margin-top: 5px; accent-color: var(--ink); }
+.import-project strong, .import-project small { display: block; overflow-wrap: anywhere; }
+.import-project small { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.import-project span { min-width: 0; }
+#local-import-count { margin-right: auto; align-self: center; }
+.import-conversation { max-height: 55vh; overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.import-message { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.7; margin-top: 8px; }
+@media (max-width: 600px) { .import-filters { grid-template-columns: 1fr; } }
