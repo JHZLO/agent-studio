@@ -66,3 +66,34 @@ test("A recovered Codex host retains identity and stops its owned process", { ti
   await recovered.stop(); await exited;
   assert.notEqual(host.process.exitCode, undefined);
 });
+test("Local API enforces Host, Origin, cookie and CSRF and keeps the runner after API exit", { timeout: 30000 }, async t => {
+  const path = await directory(t), reserve = createServer(); const port = await listen(reserve); await close(reserve);
+  const env = { ...process.env, AGENT_STUDIO_DATA_DIR: path, AGENT_STUDIO_PORT: String(port) };
+  const api = spawn(process.execPath, ["--import", "tsx", "apps/server/main.ts"], { cwd: process.cwd(), env, stdio: "ignore" });
+  let runnerPid: number | undefined;
+  t.after(async () => {
+    api.kill("SIGTERM"); if (runnerPid) try { process.kill(runnerPid, "SIGTERM"); } catch {}
+    for (let i = 0; i < 50; i++) { try { await readFile(join(path, "runner.lock")); await delay(100); } catch { break; } }
+  });
+  const origin = `http://127.0.0.1:${port}`;
+  let response: Response | undefined;
+  for (let i = 0; i < 100; i++) { try { response = await fetch(origin + "/api/bootstrap"); if (response.ok) break; } catch {} await delay(100); }
+  assert(response?.ok, "API must start");
+  runnerPid = JSON.parse(await readFile(join(path, "runner.lock"), "utf8")).pid;
+  const cookie = response.headers.getSetCookie()[0].split(";")[0]; const bootstrap = await response.json();
+  assert.equal((await fetch(origin + "/api/state")).status, 401);
+  const wrongHost = await new Promise(resolve => { const request = httpRequest(origin + "/api/bootstrap", { headers: { Host: "attacker.test" } }, response => { response.resume(); resolve(response.statusCode); }); request.on("error", error => { throw error; }); request.end(); });
+  assert.equal(wrongHost, 403);
+  assert.equal((await fetch(origin + "/api/bootstrap", { headers: { Origin: "https://attacker.test" } })).status, 403);
+  const body = JSON.stringify({ state: bootstrap.state, revision: bootstrap.state.revision, commandId: randomUUID() });
+  const headers = { Cookie: cookie, Origin: origin, "Content-Type": "application/json" };
+  assert.equal((await fetch(origin + "/api/settings", { method: "POST", headers, body })).status, 403);
+  assert.equal((await fetch(origin + "/api/settings", { method: "POST", headers: { ...headers, "X-Studio-CSRF": bootstrap.csrf }, body })).status, 200);
+  const again = await fetch(origin + "/api/settings", { method: "POST", headers: { ...headers, "X-Studio-CSRF": bootstrap.csrf }, body });
+  assert.deepEqual(await again.json(), { revision: 1 });
+  const sse = await fetch(origin + "/api/events", { headers: { Cookie: cookie } }); const reader = sse.body!.getReader();
+  assert.match(new TextDecoder().decode((await reader.read()).value), /connected/);
+  const exited = new Promise(resolve => api.once("exit", resolve)); api.kill("SIGTERM"); await exited; await reader.cancel();
+  process.kill(runnerPid!, 0);
+  assert.equal(JSON.parse(await readFile(join(path, "runner.lock"), "utf8")).pid, runnerPid);
+});
