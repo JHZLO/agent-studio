@@ -19,7 +19,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     view: "home", selected: null, artifactId: null, pendingOrder: null,
     sessionTab: "conversation", step: 0, followRun: true, historyId: null,
     linkFrom: null, zoom: null, connectProvider: "codex", connectAuth: "subscription",
-    skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", starting: false,
+    skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", editingAgentId: null, starting: false,
     navigationOpen: false, navigationActions: false,
     projectDraft: null, folderRequest: null, folderListing: null,
   };
@@ -209,7 +209,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     const retainedTerminal = ui.view === "run" && ui.sessionTab === "terminal" ? retainTerminal() : null;
     const focused = document.activeElement;
     const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
-    const preserved = live ? [app.querySelector(".inspector-form"), document.getElementById("task-brief")] : [];
+    const preserved = live ? [document.getElementById("task-brief")] : [];
     const scrollPositions = live ? [...document.querySelectorAll(".session-content, .evidence-body, .run-steps, .canvas-viewport, .sidebar")].map(element => [element.className, element.scrollTop, element.scrollLeft]) : [];
     const viewNames = { home: "New task", team: "Flows", run: "Task details", agents: "Agent library", skills: "Skill library", connections: "AI connections", runs: "Tasks", defaults: "Workspace defaults" };
     const entering = renderedView !== ui.view;
@@ -220,7 +220,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     syncNavigation();
     for (const panel of preserved) {
       if (!panel) continue;
-      const next = app.querySelector(panel.id === "task-brief" ? "#task-brief" : ".inspector-form");
+      const next = app.querySelector("#task-brief");
       if (next) next.replaceWith(panel);
     }
     for (const [className, scrollTop, scrollLeft] of scrollPositions) {
@@ -265,8 +265,8 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
 
   function builderView() {
     const agent = state.agents.find(item => item.id === ui.selected);
-    return `<div class="builder-grid ${agent ? "with-inspector" : ""}"><section class="panel canvas-panel"><div class="panel-heading"><div class="flow-meta"><h2>${currentFlow().workflow.length} agents</h2><span class="divider"></span><span class="meta">Run in sequence</span></div>${button("library", "Add agent", "plus", "small", "", engine.isActive())}</div><div class="canvas-viewport" aria-label="Agent workflow canvas"><div class="canvas-wrap"><div class="canvas-stage">${canvas()}</div></div></div><div class="canvas-footer"><span class="canvas-tip">${icon("cursor")}${ui.linkFrom ? "Choose a later input to preview the new order. Esc cancels." : "Select an agent to edit. Connect ports to preview a new order."}</span><div class="zoom-controls">${button("zoom-out", "", "minus", "text icon-only", 'aria-label="Zoom out"')}<span class="zoom-value">Fit</span>${button("zoom-in", "", "plus", "text icon-only", 'aria-label="Zoom in"')}${button("fit", "", "fit", "text icon-only", 'aria-label="Fit workflow"')}</div></div></section>
-      ${agent ? `<aside class="panel inspector" style="${agentStyle(agent)}" aria-label="Agent configuration"><div class="inspector-header">${agentIcon(agent)}<div><h2>${escape(agent.name)}</h2><p>${engine.isActive() ? "Edits apply to the next run" : "Reusable agent preset"}</p></div>${button("close-inspector", "", "close", "text icon-only", 'aria-label="Close agent settings"')}</div>${agentForm(agent)}</aside>` : ""}</div><div class="team-footer"><span>${icon("check")}<span id="save-status" role="status">${escape(saveStatus())}</span></span></div>`;
+    return `<div class="builder-grid ${agent ? "with-inspector" : ""}"><section class="panel canvas-panel"><div class="panel-heading"><div class="flow-meta"><h2>${currentFlow().workflow.length} agents</h2><span class="divider"></span><span class="meta">Run in sequence</span></div>${button("library", "Add agent", "plus", "small", "", engine.isActive())}</div><div class="canvas-viewport" aria-label="Agent workflow canvas"><div class="canvas-wrap"><div class="canvas-stage">${canvas()}</div></div></div><div class="canvas-footer"><span class="canvas-tip">${icon("cursor")}${ui.linkFrom ? "Choose a later input to preview the new order. Esc cancels." : "Select a step to change its order. Connect ports to preview a new order."}</span><div class="zoom-controls">${button("zoom-out", "", "minus", "text icon-only", 'aria-label="Zoom out"')}<span class="zoom-value">Fit</span>${button("zoom-in", "", "plus", "text icon-only", 'aria-label="Zoom in"')}${button("fit", "", "fit", "text icon-only", 'aria-label="Fit workflow"')}</div></div></section>
+      ${agent ? `<aside class="panel inspector" style="${agentStyle(agent)}" aria-label="Flow step settings"><div class="inspector-header">${agentIcon(agent)}<div><h2>${escape(agent.name)}</h2><p>Step settings</p></div>${button("close-inspector", "", "close", "text icon-only", 'aria-label="Close step settings"')}</div>${stepSettings(agent)}</aside>` : ""}</div><div class="team-footer"><span>${icon("check")}<span id="save-status" role="status">${escape(saveStatus())}</span></span></div>`;
   }
 
   function position(index) {
@@ -289,7 +289,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
         const path = pos.row === next.row ? `M ${pos.forward ? pos.x + 208 : pos.x} ${pos.y + 67} H ${pos.forward ? next.x : next.x + 208}` : `M ${pos.x + 104} ${pos.y + 135} V ${next.y}`;
         lines += `<path class="flow-line" d="${path}" marker-end="url(#arrowhead)"/>`;
       }
-      nodes += `<div class="node ${ui.selected === id ? "selected" : ""}" style="${agentStyle(agent)};left:${pos.x}px;top:${pos.y}px"><button class="node-body" data-action="select-agent" data-id="${escape(id)}" aria-label="Configure ${escape(agent.name)}" aria-pressed="${ui.selected === id}"><span class="node-top">${agentIcon(agent)}<span class="node-name">${escape(agent.name)}</span></span><span class="node-output">${roleOutputs[agent.role]}</span><span class="node-bottom"><span class="node-status">${providerName(agent.provider)}</span><span class="node-number">${String(index + 1).padStart(2, "0")}</span></span></button><button class="port ${inputSide}" data-action="connect-to" data-id="${escape(id)}" aria-label="Connect to ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button><button class="port ${outputSide} ${ui.linkFrom === id ? "linking" : ""}" data-action="connect-from" data-id="${escape(id)}" aria-label="Connect from ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button></div>`;
+      nodes += `<div class="node ${ui.selected === id ? "selected" : ""}" style="${agentStyle(agent)};left:${pos.x}px;top:${pos.y}px"><button class="node-body" data-action="select-agent" data-id="${escape(id)}" aria-label="Step settings for ${escape(agent.name)}" aria-pressed="${ui.selected === id}"><span class="node-top">${agentIcon(agent)}<span class="node-name">${escape(agent.name)}</span></span><span class="node-output">${roleOutputs[agent.role]}</span><span class="node-bottom"><span class="node-status">${providerName(agent.provider)}</span><span class="node-number">${String(index + 1).padStart(2, "0")}</span></span></button><button class="port ${inputSide}" data-action="connect-to" data-id="${escape(id)}" aria-label="Connect to ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button><button class="port ${outputSide} ${ui.linkFrom === id ? "linking" : ""}" data-action="connect-from" data-id="${escape(id)}" aria-label="Connect from ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button></div>`;
     });
     return `<svg class="connections-svg" viewBox="0 0 820 ${height}" style="height:${height}px" aria-hidden="true"><defs><marker id="arrowhead" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0 0L5 2.5L0 5" fill="none" stroke="#2b2238" stroke-width="1"/></marker></defs>${lines}</svg><div class="flow-caption" style="top:27px">${icon("message")} YOUR BRIEF</div>${nodes}${!currentFlow().workflow.length ? `<div style="padding:100px 70px"><h2>No agents yet</h2><p style="margin-top:15px">Add an agent to create the first step.</p></div>` : ""}`;
   }
@@ -310,27 +310,45 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     document.querySelector(".zoom-value").textContent = `${Math.round(scale * 100)}%`;
   }
 
-  function agentForm(agent, inModal = false) {
+  function stepSettings(agent) {
     const index = currentFlow().workflow.indexOf(agent.id);
-    return `<form class="inspector-form" data-form="agent" data-id="${escape(agent.id)}"><div class="field"><label for="agent-name">Name</label><input id="agent-name" name="name" value="${escape(agent.name)}" maxlength="40" required></div>
+    return `<div class="step-settings"><div class="step-order"><span class="field-label">Step order</span><strong>${index + 1} of ${currentFlow().workflow.length}</strong></div><div class="step-controls">${button("move-up", "Earlier", "up", "small", 'aria-label="Move step earlier"', index === 0 || engine.isActive())}${button("move-down", "Later", "down", "small", 'aria-label="Move step later"', index === currentFlow().workflow.length - 1 || engine.isActive())}</div><dl class="definition-list"><dt>Connection</dt><dd>${providerName(agent.provider)} / ${authName(agent.auth)}</dd><dt>Model</dt><dd>${escape(agent.model)}</dd><dt>Skills</dt><dd>${agent.skillBindings.length} attached</dd></dl><p class="meta">Edit this agent's instructions, model, skills, and tools in the Agent library.</p>${button("edit-agent", "Edit in Agent library", "edit", "full", `data-id="${escape(agent.id)}"`)}<div class="step-remove">${button("remove-step", "Remove from flow", "trash", "text small", "", engine.isActive())}<p class="meta">The agent stays in your library.</p></div></div>`;
+  }
+
+  function editAgent(id, form = null) {
+    const agent = state.agents.find(item => item.id === id);
+    if (!agent) return;
+    ui.editingAgentId = id;
+    ui.selected = null;
+    if (ui.view !== "agents") { ui.view = "agents"; render(); }
+    const flowCount = state.flows.filter(flow => flow.workflow.includes(id)).length;
+    showModal(escape(agent.name), `<p class="agent-reuse-note">${flowCount ? `Used in ${flowCount} ${flowCount === 1 ? "flow" : "flows"}. Changes apply everywhere this agent is used.` : "Configure this agent, then add it to a flow."} Active tasks keep their current settings.</p>${form ? '<div id="agent-editor-fields"></div>' : agentForm(agent)}`, button("close-modal", "Cancel", "") + '<button type="submit" form="agent-preset-form" class="btn primary">Save agent</button>', true, "Agent library / Edit agent");
+    modal.classList.add("agent-editor");
+    if (form) {
+      modal.querySelector("#agent-editor-fields").replaceWith(form);
+      form.querySelector('[data-action="choose-skills"]').focus();
+    } else modal.querySelector("#agent-name").focus();
+  }
+
+  function agentForm(agent) {
+    return `<form id="agent-preset-form" class="agent-form" data-form="agent" data-id="${escape(agent.id)}"><div class="field agent-name-field"><label for="agent-name">Name</label><input id="agent-name" name="name" value="${escape(agent.name)}" maxlength="40" required></div>
       <div class="field prompt-field"><label for="agent-prompt">Instructions</label><textarea id="agent-prompt" name="prompt" rows="4" maxlength="2500" required>${escape(agent.prompt)}</textarea></div>
       <div class="field"><label for="agent-connection">AI connection</label><select id="agent-connection" name="connection">${["codex", "claude"].flatMap(provider => ["subscription", "api"].map(auth => `<option value="${provider}|${auth}"${selected(`${agent.provider}|${agent.auth}`, `${provider}|${auth}`)}>${providerName(provider)} / ${authName(auth)}</option>`)).join("")}</select></div>
       <div class="field"><label for="agent-model">Model</label><select id="agent-model" name="model">${modelOptions(agent.provider, agent.auth, agent.model)}</select><small>Models come from your connection. Aliases follow runtime updates; Default uses the runtime selection.</small>${button("refresh-models", "Refresh models", "reset", "text small")}</div>
       <div class="field skill-binding-field">${bindingField(agent.skillBindings || [])}</div>
-      <div class="field"><span class="field-label">Allowed tools</span><div class="checks">${[["read", "Read files"], ["write", "Write files"], ["shell", "Shell"], ["browser", "Browser"]].map(([value, label]) => `<label class="check"><input type="checkbox" name="tools" value="${value}"${agent.tools.includes(value) ? " checked" : ""}>${label}</label>`).join("")}</div></div>
-      <div class="context-chip">${icon("leaf")}New session per step. Only the brief, decisions, and artifact references carry forward.</div><button type="submit" class="btn primary full">${icon("check")}Save preset</button>
-      ${!inModal && index >= 0 ? `<div class="inspector-bottom"><div class="actions">${button("move-up", "", "up", "small icon-only", 'aria-label="Move step earlier"', index === 0 || engine.isActive())}${button("move-down", "", "down", "small icon-only", 'aria-label="Move step later"', index === currentFlow().workflow.length - 1 || engine.isActive())}</div>${button("remove-step", "Remove step", "trash", "text small", "", engine.isActive())}</div>` : ""}</form>`;
+      <div class="field agent-tools-field"><span class="field-label">Allowed tools</span><div class="checks">${[["read", "Read files"], ["write", "Write files"], ["shell", "Shell"], ["browser", "Browser"]].map(([value, label]) => `<label class="check"><input type="checkbox" name="tools" value="${value}"${agent.tools.includes(value) ? " checked" : ""}>${label}</label>`).join("")}</div></div>
+      <div class="context-chip">${icon("leaf")}New session per step. Only the brief, decisions, and artifact references carry forward.</div></form>`;
   }
 
   function agentsView() {
     return heading("Your <em>agents</em>", "Give each role a purpose, a model, and a set of boundaries.", button("new-agent", "New agent", "plus", "primary"), "Reusable presets") +
-      `<div class="content-grid">${state.agents.map(agent => `<section class="panel agent-card tilt" style="${agentStyle(agent)}"><div class="card-top">${agentIcon(agent, true)}<div><h2>${escape(agent.name)}</h2><p>${providerName(agent.provider)} / ${escape(agent.model)}</p></div></div><p>${escape(roles[agent.role].description)}</p><div class="skill-list">${agent.skillBindings.length ? agent.skillBindings.map(skill => `<span class="skill-chip" aria-pressed="true">${icon("file")}${escape(skill.name)}</span>`).join("") : '<span class="meta">No skills attached</span>'}</div><div class="card-footer">${currentFlow().workflow.includes(agent.id) ? '<span class="badge">In workflow</span>' : button("add-existing", "Add to workflow", "plus", "small", `data-id="${escape(agent.id)}"`, engine.isActive())}${button("edit-agent", "Edit preset", "edit", "text small", `data-id="${escape(agent.id)}"`)}</div></section>`).join("")}</div>`;
+      `<div class="content-grid">${state.agents.map(agent => `<section class="panel agent-card tilt" style="${agentStyle(agent)}"><div class="card-top">${agentIcon(agent, true)}<div><h2>${escape(agent.name)}</h2><p>${providerName(agent.provider)} / ${escape(agent.model)}</p></div></div><p>${escape(roles[agent.role].description)}</p><div class="skill-list">${agent.skillBindings.length ? agent.skillBindings.map(skill => `<span class="skill-chip" aria-pressed="true">${icon("file")}${escape(skill.name)}</span>`).join("") : '<span class="meta">No skills attached</span>'}</div><div class="card-footer">${currentFlow().workflow.includes(agent.id) ? '<span class="badge">In workflow</span>' : button("add-existing", "Add to workflow", "plus", "small", `data-id="${escape(agent.id)}"`, engine.isActive())}${button("edit-agent", "Edit agent", "edit", "text small", `data-id="${escape(agent.id)}"`)}</div></section>`).join("")}</div>`;
   }
 
   function bindingField(bindings) {
     return `<div class="binding-heading"><span class="field-label">Attached skills <span class="count-label">${bindings.length}</span></span>${button("choose-skills", "Choose skills", "plus", "text small")}</div><input type="hidden" name="skillBindings" value="${escape(JSON.stringify(bindings))}"><div class="bound-skills">${bindings.map(binding => {
       const source = catalog.skills.find(item => item.id === binding.id);
-      return `<div class="bound-skill">${icon("file")}<div><strong>${escape(binding.name)}</strong><small>${source ? (source.version === binding.version ? (source.requirements.length ? "Review tool setup" : "Available") : "Source changed - update binding") : "Source unavailable"}</small>${source && source.version !== binding.version ? button("update-skill", "Use latest version", "reset", "text small", `data-id="${escape(binding.id)}"`) : ""}</div>${button("remove-skill", "", "close", "text icon-only", `data-id="${escape(binding.id)}" aria-label="Remove ${escape(binding.name)} skill"`)}</div>`;
+      return `<div class="bound-skill">${icon("file")}<div><strong>${escape(binding.name)}</strong><small>${source ? (source.version === binding.version ? (source.requirements.length ? "Review tool setup" : "Available") : "Source changed - update binding") : catalog.mode === "loading" ? "Checking source..." : "Source unavailable"}</small>${source && source.version !== binding.version ? button("update-skill", "Use latest version", "reset", "text small", `data-id="${escape(binding.id)}"`) : ""}</div>${button("remove-skill", "", "close", "text icon-only", `data-id="${escape(binding.id)}" aria-label="Remove ${escape(binding.name)} skill"`)}</div>`;
     }).join("") || '<div class="binding-empty">Add instructions from your skill library.</div>'}</div><small>Saved with this preset. Each run keeps its own version.</small>`;
   }
 
@@ -366,8 +384,10 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
   }
 
   async function skillDetail(id) {
+    const pickerTarget = ui.pickerTarget;
     try {
       const skill = await catalog.detail(id);
+      if (pickerTarget && (ui.pickerTarget !== pickerTarget || !modal.open)) return;
       showSkillFiles(skill.name, skill, ui.pickerDraft ? button("back-skills", "Back to selection", "arrow", "back-button") : "");
     } catch (error) { toast(error.message); }
   }
@@ -490,6 +510,13 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
 
   function closeModal() {
     clearTimeout(connectionTimer);
+    if (ui.editingAgentId && ui.pickerTarget) {
+      const form = ui.pickerTarget;
+      ui.pickerDraft = null; ui.pickerTarget = null;
+      editAgent(ui.editingAgentId, form);
+      return;
+    }
+    ui.editingAgentId = null;
     ui.folderRequest = null;
     modal.close();
     ui.pickerDraft = null; ui.pickerTarget = null;
@@ -639,7 +666,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
   }
 
   function newAgentModal() {
-    showModal("Create agent", `<p>Create a preset, then tune its instructions, model, skills, and permissions.</p><form id="new-agent-form" data-form="new-agent"><div class="field"><label for="new-agent-name">Agent name</label><input id="new-agent-name" name="name" maxlength="40" placeholder="e.g. Data architect" required></div><div class="field"><label for="new-agent-role">Start from a role</label><select id="new-agent-role" name="role">${Object.entries(roles).map(([key, role]) => `<option value="${key}">${role.label}</option>`).join("")}</select></div></form>`, button("close-modal", "Cancel", "") + '<button type="submit" form="new-agent-form" class="btn primary">Create preset</button>');
+    showModal("Create agent", `<p>Create an agent, then edit its instructions, model, skills, and permissions in the Agent library.</p><form id="new-agent-form" data-form="new-agent"><div class="field"><label for="new-agent-name">Agent name</label><input id="new-agent-name" name="name" maxlength="40" placeholder="e.g. Data architect" required></div><div class="field"><label for="new-agent-role">Start from a role</label><select id="new-agent-role" name="role">${Object.entries(roles).map(([key, role]) => `<option value="${key}">${role.label}</option>`).join("")}</select></div></form>`, button("close-modal", "Cancel", "") + '<button type="submit" form="new-agent-form" class="btn primary">Create agent</button>');
   }
 
   function helpModal() {
@@ -767,7 +794,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     }
     else if (action === "project-settings") await projectSettings();
     else if (action === "run-project") runProjectDetails();
-    else if (action === "configure-agent") { ui.view = "team"; ui.selected = id; render(); }
+    else if (action === "configure-agent") editAgent(id);
     else if (action === "select-agent") { ui.selected = id; render(); if (matchMedia("(max-width: 880px)").matches) document.querySelector(".inspector")?.scrollIntoView({ block: "nearest" }); }
     else if (action === "close-inspector") { ui.selected = null; render(); }
     else if (action === "all-outputs") { ui.artifactId = null; render(); }
@@ -812,12 +839,12 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     else if (action === "assign-skill") {
       ui.pickerDraft = null;
       const skill = catalog.skills.find(item => item.id === id);
-      showModal(`Attach ${escape(skill.name)}`, `<p>Choose an agent. You can review and save its skills in the inspector.</p><div class="assign-list">${state.agents.map(agent => `<button class="assign-agent" data-action="assign-to-agent" data-id="${escape(agent.id)}" data-skill="${id}">${agentIcon(agent)}<strong>${escape(agent.name)}</strong>${icon("chevron")}</button>`).join("")}</div>`);
+      showModal(`Attach ${escape(skill.name)}`, `<p>Choose an agent. Review and save its skills in the Agent library editor.</p><div class="assign-list">${state.agents.map(agent => `<button class="assign-agent" data-action="assign-to-agent" data-id="${escape(agent.id)}" data-skill="${id}">${agentIcon(agent)}<strong>${escape(agent.name)}</strong>${icon("chevron")}</button>`).join("")}</div>`);
     }
     else if (action === "assign-to-agent") {
       const skill = catalog.skills.find(item => item.id === target.dataset.skill);
-      closeModal(); ui.view = "team"; ui.selected = id; render();
-      const form = app.querySelector(".inspector-form");
+      closeModal(); editAgent(id);
+      const form = modal.querySelector(".agent-form");
       const bindings = JSON.parse(form.elements.skillBindings.value).filter(item => item.id !== skill.id);
       bindings.push({ id: skill.id, name: skill.name, version: skill.version, sample: !!skill.sample });
       form.querySelector(".skill-binding-field").innerHTML = bindingField(bindings);
@@ -875,9 +902,7 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     }
     else if (action === "library") libraryModal();
     else if (action === "new-agent") newAgentModal();
-    else if (action === "edit-agent") {
-      ui.view = "team"; ui.selected = id; render();
-    }
+    else if (action === "edit-agent") editAgent(id);
     else if (action === "add-existing") {
       if (engine.isActive()) return toast("Finish or cancel the active run before editing the workflow.");
       if (currentFlow().workflow.length >= 12) return toast("A sequential flow supports up to 12 steps.");
@@ -998,10 +1023,11 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
       const template = initialState().agents.find(agent => agent.role === role);
       const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       state.agents.push({ ...template, id, name, prompt: prompts[role] });
-      const added = !engine.isActive() && currentFlow().workflow.length < 12;
+      const added = ui.view === "team" && !engine.isActive() && currentFlow().workflow.length < 12;
       if (added) currentFlow().workflow.push(id);
-      ui.selected = id; ui.view = added ? "team" : "agents"; ui.zoom = null;
-      persist(); closeModal(); render(); toast(added ? "Agent created and added. Tune its instructions in the side panel." : "Preset created in your library. Add it after the current run.");
+      ui.selected = null; ui.view = "agents"; ui.zoom = null;
+      persist(); closeModal(); render(); editAgent(id);
+      toast(added ? "Agent created and added to the flow. Edit its shared settings here." : "Agent created in your library. Edit its settings here.");
     }
   });
 
@@ -1063,12 +1089,18 @@ import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js"
     if (card && !card.contains(event.relatedTarget)) { card.style.removeProperty("--tilt-x"); card.style.removeProperty("--tilt-y"); }
   });
   mobileNavigation.addEventListener("change", () => { ui.navigationOpen = false; ui.navigationActions = false; render(true); });
-  modal.addEventListener("cancel", () => { clearTimeout(connectionTimer); ui.pickerDraft = null; ui.pickerTarget = null; ui.folderRequest = null; });
+  modal.addEventListener("cancel", event => { event.preventDefault(); closeModal(); });
   modal.addEventListener("click", event => { if (event.target === modal && (event.clientX < modal.getBoundingClientRect().left || event.clientX > modal.getBoundingClientRect().right || event.clientY < modal.getBoundingClientRect().top || event.clientY > modal.getBoundingClientRect().bottom)) closeModal(); });
   window.addEventListener("pagehide", () => { void flush().catch(() => {}); engine.dispose(); });
   window.addEventListener("pageshow", event => { if (event.persisted) { engine.closed = false; engine.connect(); } });
   window.addEventListener("studio-save", event => { const label = document.getElementById("save-status"); if (label) label.textContent = event.detail; });
   window.addEventListener("studio-error", event => { persistent = false; toast(event.detail); });
   render();
-  catalog.load(state.skillRoots).then(() => render(true));
+  catalog.load(state.skillRoots).then(() => {
+    render(true);
+    const form = ui.pickerTarget || modal.querySelector('[data-form="agent"]');
+    if (form) form.querySelector(".skill-binding-field").innerHTML = bindingField(JSON.parse(form.elements.skillBindings.value));
+    const rows = document.getElementById("picker-rows");
+    if (rows) rows.innerHTML = skillRows(ui.pickerQuery, true);
+  });
 })();

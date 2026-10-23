@@ -9,3 +9,22 @@
 .project-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .project-row .project-choice { flex: 1; min-width: 0; }
 .project-path { overflow-wrap: anywhere; font: 12px/1.6 var(--font-mono); }
+.step-settings { padding: 18px; }
+.step-order { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.step-order strong { font: 20px var(--font-display); }
+.step-controls { display: flex; gap: 8px; margin: 12px 0 20px; }
+.step-controls .btn { flex: 1; }
+.step-settings .definition-list { grid-template-columns: auto minmax(0, 1fr); margin-bottom: 20px; }
+.step-settings .definition-list dd { overflow-wrap: anywhere; }
+.step-settings > .meta { margin-bottom: 12px; }
+.step-remove { border-top: 1.5px dashed var(--line-2); margin-top: 20px; padding-top: 12px; }
+.step-remove .meta { margin: 8px 0 0; }
+dialog[open].agent-editor { display: flex; flex-direction: column; overflow: hidden; width: min(760px, calc(100% - 28px)); max-height: 90dvh; }
+.agent-editor .modal-head, .agent-editor .modal-footer { flex: none; }
+.agent-editor .modal-body { min-height: 0; overflow: auto; }
+.agent-editor .modal-head h2 { overflow-wrap: anywhere; }
+.agent-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 20px; }
+.agent-form .field { min-width: 0; align-content: start; }
+.agent-form .agent-name-field, .agent-form .prompt-field, .agent-form .skill-binding-field, .agent-form .agent-tools-field, .agent-form .context-chip { grid-column: 1 / -1; }
+.agent-form .prompt-field textarea { min-height: 140px; }
+@media (max-width: 600px) { .agent-form { grid-template-columns: minmax(0, 1fr); } }
