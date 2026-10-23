@@ -29,6 +29,7 @@ API keys are kept in runner memory. Enter them again after a runner restart. Sub
 ## What works
 
 - Project registration, folder browsing, branch validation, local execution, and real worktree creation.
+- Selective import of local Codex and Claude Code project folders, with deduplication and access to previously imported conversation snapshots.
 - Multiple flows with create, rename, duplicate, archive, restore, node ordering, port connection previews, zoom, and JSON export.
 - Six role presets with editable prompts, provider, model, tool permissions, and local skill bindings.
 - A local skill catalog with search, source folders, version checks, frozen snapshots, and previous-run inspection.
@@ -49,7 +50,15 @@ Pause the task and wait for its current step to finish. Open **Terminal** on a s
 
 A runner restart requires reconciliation. Studio checks the saved provider thread, turn, account, project path, and recorded evidence. A completed exact turn or saved step boundary can be recovered. Missing, active, or ambiguous turns are not replayed. Review changed files before cancelling an uncertain run and starting a new one.
 
-Native Claude terminal sharing, existing externally owned CLI sessions, and automatic synchronization with the OpenAI Codex desktop app are not supported. Browser QA uses Playwright through the runner.
+Native Claude terminal sharing, control of externally owned CLI sessions, and automatic synchronization with the OpenAI Codex desktop app are not supported. Browser QA uses Playwright through the runner.
+
+### Import existing local projects
+
+Click the import icon immediately to the left of **+** beside **Projects** in the sidebar. Search by project name or folder path, filter by Codex or Claude Code, and select up to 100 projects. The list shows one row per folder and excludes unavailable folders. Projects already in Studio are marked and cannot be selected again.
+
+Studio discovers folders from Codex's local catalog and Claude Code's local history, then registers the selected folders in its workspace. Git worktrees are grouped under their original working folder using their shared Git metadata. Separate repositories with the same name stay separate. Conversation history stays in the source app. Importing does not start a model, resume a session, or change project files. Existing project settings are preserved.
+
+Previously imported conversation snapshots remain accessible from **Imported sessions**, which appears when saved snapshots exist. Local storage formats can change with provider updates; discovery reports read failures instead of inventing missing projects.
 
 ## Development and checks
 
