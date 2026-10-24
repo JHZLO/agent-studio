@@ -579,6 +579,11 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; border-radi
 .history-table td:first-child { width: 55%; }
 .history-table strong { display: block; font-size: 14px; line-height: 1.55; font-weight: 650; }
 .history-table small { display: block; font-family: var(--font-mono); color: var(--muted); margin-top: 6px; font-size: 10.5px; }
+.task-row { position: relative; cursor: pointer; }
+.task-row-open { display: inline-flex; align-items: center; gap: 8px; border: 0; padding: 0; background: none; color: inherit; text-align: left; }
+.task-row-open::after { content: ""; position: absolute; inset: 0; }
+.task-row-open:focus-visible { outline: none; }
+.task-row:has(.task-row-open:focus-visible) { outline: 2.5px solid var(--focus); outline-offset: -3px; background: var(--cream); }
 .settings-panel { max-width: 960px; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 25px; padding: 22px 24px; border-bottom: 1.5px dashed var(--line-2); }
 .setting-row:last-child { border-bottom: 0; }
