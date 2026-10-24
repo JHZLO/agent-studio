@@ -62,6 +62,9 @@ export async function codeReference(cwd: string) {
 export class Toolbox {
   readonly receipts: Receipt[] = [];
   private processes = new Set<ChildProcess>();
+  private foreground = new Set<ChildProcess>();
+  private calls = new Set<Promise<unknown>>();
+  private abort = new AbortController();
   private browser?: Browser;
   private page?: Page;
   private network: { url: string; method: string; status: number }[] = [];
@@ -94,10 +97,16 @@ export class Toolbox {
     if (!local && (!allowExternal || (!this.bypassPermissions && !await this.context.approval("network", "Allow this test target?", `${url.origin}\nNo production target is permitted.`)))) throw new Error("The test target was not approved.");
     return url;
   }
-  async call(name: string, raw: unknown) {
+  call(name: string, raw: unknown) {
+    const pending = this.recordCall(name, raw).finally(() => this.calls.delete(pending));
+    this.calls.add(pending);
+    return pending;
+  }
+  private async recordCall(name: string, raw: unknown) {
     const spec = specs.find(spec => spec.name === name);
     if (!spec || !enabledTools(this.context.step).includes(spec.permission)) throw new Error("This tool is not enabled for the agent.");
     if (this.disposed) throw new Error("The run is no longer accepting tool calls.");
+    this.abort.signal.throwIfAborted();
     if (this.receipts.length >= 100 || this.evidenceBytes > 1024 * 1024) throw new Error("This step reached its tool evidence budget. Return a handoff with any remaining work; do not repeat this call.");
     const input = z.record(z.string(), z.unknown()).parse(raw);
     const id = randomUUID(), at = new Date().toISOString();
@@ -148,6 +157,7 @@ export class Toolbox {
       const target = await this.file(path, true);
       await mkdir(dirname(target), { recursive: true });
       if (!this.bypassPermissions && !contained(this.context.run.cwd, await realpath(dirname(target)))) throw new Error("Symlink escapes the project.");
+      this.abort.signal.throwIfAborted();
       const handle = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o644);
       try { await handle.writeFile(content); } finally { await handle.close(); }
       return { path, bytes: Buffer.byteLength(content), hash: hash(content) };
@@ -163,7 +173,7 @@ export class Toolbox {
     if (name === "studio_http") {
       const data = z.object({ url: z.string(), method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]), body: z.string().max(64000), headers: z.record(z.string(), z.string()).refine(headers => !Object.keys(headers).some(key => /^(authorization|cookie|host|proxy-)/i.test(key)), "Credential and routing headers are not accepted by this test tool.") }).parse(input);
       const url = await this.target(data.url);
-      const response = await fetch(url, { method: data.method, headers: data.headers, body: data.body && data.method !== "GET" ? data.body : undefined, redirect: "manual", signal: AbortSignal.timeout(15000) });
+      const response = await fetch(url, { method: data.method, headers: data.headers, body: data.body && data.method !== "GET" ? data.body : undefined, redirect: "manual", signal: AbortSignal.any([this.abort.signal, AbortSignal.timeout(15000)]) });
       const reader = response.body?.getReader(); const chunks: Uint8Array[] = []; let size = 0, truncated = false;
       if (reader) try { while (true) { const next = await reader.read(); if (next.done) break; chunks.push(next.value.subarray(0, Math.max(0, 64000 - size))); size += next.value.byteLength; if (size > 64000) { truncated = true; break; } } } finally { await reader.cancel(); }
       const body = Buffer.concat(chunks).toString("utf8");
@@ -181,8 +191,10 @@ export class Toolbox {
     throw new Error("Unknown tool.");
   }
   private async command(binary: string, args: string[], timeout: number, background: boolean) {
+    this.abort.signal.throwIfAborted();
     const process = spawn(binary, args, { cwd: this.context.run.cwd, env: runtimeEnvironment(), stdio: ["ignore", "pipe", "pipe"], detached: true });
     this.processes.add(process);
+    this.foreground.add(process);
     let text = "";
     process.stdout?.on("data", chunk => { text = (text + chunk).slice(-64000); });
     process.stderr?.on("data", chunk => { text = (text + chunk).slice(-64000); });
@@ -190,15 +202,17 @@ export class Toolbox {
     return new Promise((resolve, reject) => {
       let returned = false;
       const timer = setTimeout(stop, background ? 600000 : timeout);
-      process.once("error", error => { clearTimeout(timer); this.processes.delete(process); reject(error); });
-      process.once("exit", (code, signal) => { clearTimeout(timer); this.processes.delete(process); if (!returned) resolve({ exitCode: code, signal, output: this.context.redact(text) }); });
-      if (background) setTimeout(() => { if (process.exitCode === null && process.pid) { returned = true; resolve({ pid: process.pid, background: true, output: this.context.redact(text), lifetimeSeconds: 600 }); } }, 800);
+      process.once("error", error => { clearTimeout(timer); this.processes.delete(process); this.foreground.delete(process); reject(error); });
+      process.once("exit", (code, signal) => { clearTimeout(timer); this.processes.delete(process); this.foreground.delete(process); if (!returned) resolve({ exitCode: code, signal, output: this.context.redact(text) }); });
+      if (background) setTimeout(() => { if (process.exitCode === null && process.signalCode === null && process.pid) { returned = true; this.foreground.delete(process); resolve({ pid: process.pid, background: true, output: this.context.redact(text), lifetimeSeconds: 600 }); } }, 800);
     });
   }
   private async browserAction(raw: Wire) {
+    this.abort.signal.throwIfAborted();
     const { action, selector, value } = z.object({ action: z.enum(["goto", "inspect", "fill", "click", "press", "assertText", "screenshot"]), selector: z.string().max(2000), value: z.string().max(10000) }).parse(raw);
     if (!this.browser) {
       this.browser = await chromium.launch({ headless: true });
+      if (this.abort.signal.aborted) { await this.browser.close(); this.browser = undefined; throw this.abort.signal.reason; }
       const context = await this.browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: false, serviceWorkers: "block" });
       await context.route("**/*", async route => {
         try { await this.target(route.request().url(), this.bypassPermissions); await route.continue(); } catch { await route.abort(); }
@@ -207,6 +221,7 @@ export class Toolbox {
       this.page.on("response", response => { this.network.push({ url: response.url(), method: response.request().method(), status: response.status() }); this.network = this.network.slice(-40); });
       this.page.on("pageerror", error => { this.browserErrors.push(this.context.redact(error.message)); this.browserErrors = this.browserErrors.slice(-20); });
     }
+    this.abort.signal.throwIfAborted();
     const page = this.page!;
     if (action === "goto") { const url = await this.target(value, this.bypassPermissions); await page.goto(url.toString(), { waitUntil: "domcontentloaded" }); }
     if (action === "fill") await page.locator(selector).fill(value);
@@ -223,9 +238,19 @@ export class Toolbox {
     }
     return { url: page.url(), title: await page.title(), text: (await page.locator("body").innerText()).slice(0, 16000), network: this.network, errors: this.browserErrors, controls: await page.locator("input,button,a,select,textarea,[role=status]").evaluateAll(elements => elements.slice(0, 100).map(element => ({ tag: element.tagName, id: element.id, name: element.getAttribute("name"), text: element.textContent?.slice(0, 100), label: element.getAttribute("aria-label"), labels: "labels" in element ? Array.from((element as HTMLInputElement).labels ?? []).map(label => label.textContent) : [], describedBy: element.getAttribute("aria-describedby"), invalid: element.getAttribute("aria-invalid"), role: element.getAttribute("role"), focused: element === document.activeElement, type: element.getAttribute("type") }))) };
   }
+  async interrupt() {
+    this.abort.abort(new Error("Tool interrupted by a new instruction."));
+    for (const child of this.foreground) if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch {} }
+    await this.browser?.close(); this.browser = undefined; this.page = undefined;
+    await Promise.allSettled([...this.calls]);
+  }
+  resume() {
+    if (this.disposed || this.calls.size) throw new Error("Previous tool calls have not stopped.");
+    this.abort = new AbortController();
+  }
   async close() {
     this.disposed = true;
     for (const child of this.processes) if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch {} }
-    await this.browser?.close();
+    await this.interrupt();
   }
 }

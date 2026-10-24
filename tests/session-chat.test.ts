@@ -177,3 +177,148 @@ test("Stopping an active Codex reply interrupts only its selected turn and prese
   assert.equal(done.status, "succeeded"); assert.equal(done.steps[0].activeTurnId, undefined); assert.equal(done.index, 3);
   assert.deepEqual(done.steps[1], f.run.steps[1]); assert.match(done.steps[0].messages.at(-1)!.text, /Reply stopped/);
 });
+
+async function until(check: () => unknown) {
+  for (let i = 0; i < 400; i++) { if (check()) return; await delay(5); }
+  assert.fail("The expected session state did not arrive");
+}
+
+test("Active follow-up commands drain FIFO in the same session and keep the original review", async t => {
+  const f = await fixture(t, "waiting_review"), calls: string[] = []; let release!: () => void;
+  t.mock.method(f.studio as any, "codexTurn", async (run: Run, step: Step, prompt: string) => {
+    assert.equal(step.id, "planner"); assert.equal(step.providerThreadId, "provider-planner");
+    calls.push(run.activeMessage?.message ?? run.followup!.message);
+    if (calls.length === 1) await new Promise<void>(resolve => { release = resolve; });
+    else assert(prompt.includes(`Follow-up from the user: ${calls.at(-1)}`));
+    return answer(calls.at(-1));
+  });
+  await f.send("planner", "First question"); await until(() => release);
+  const queue = (message: string, stepId = "planner") => f.studio.dispatch("run.message", { id: f.run.id, stepId, message, mode: "queue" }) as Promise<Run>;
+  await queue("Second question"); const accepted = await queue("Third question");
+  assert.deepEqual(accepted.pendingMessages?.map(item => item.message), ["Second question", "Third question"]);
+  assert.deepEqual(f.store.run(f.run.id)!.pendingMessages, accepted.pendingMessages);
+  await assert.rejects(queue("Wrong agent", "coder"), /Only the agent currently working/);
+  assert.deepEqual(calls, ["First question"]); release(); const done = await f.idle();
+  assert.deepEqual(calls, ["First question", "Second question", "Third question"]);
+  assert.equal(done.status, "waiting_review"); assert.deepEqual(done.review, f.run.review);
+  assert.equal(done.index, 1); assert.equal(done.steps[1].status, "queued"); assert.deepEqual(done.pendingMessages, []);
+  assert.equal(done.activeMessage, undefined); assert.equal(done.acceptingMessages, false);
+});
+
+test("Workflow instructions finish before the handoff and cannot bypass a human plan checkpoint", async t => {
+  const f = await fixture(t); const run = structuredClone(f.run); run.status = "running"; run.index = 0; run.artifacts = []; delete run.lockedPlan;
+  run.steps.forEach(step => { step.status = "queued"; step.messages = []; delete step.providerThreadId; delete step.finalText; }); run.steps[0].reviewRequired = true;
+  (f.studio as any).runs.set(run.id, run); const calls: string[] = []; let release!: () => void;
+  t.mock.method(f.studio as any, "codexTurn", async (current: Run, step: Step, prompt: string) => {
+    assert.equal(current.index, 0); assert.equal(step.id, "planner"); step.providerThreadId = "same-thread";
+    const text = current.activeMessage?.message || "Initial plan"; calls.push(text);
+    if (calls.length === 1) await new Promise<void>(resolve => { release = resolve; });
+    else assert.match(prompt, /Return the complete updated role outputs/);
+    return JSON.stringify({ summary: text, status: "completed", decision: "pass", artifacts: [{ name: "implementation-plan.md", type: "Plan", content: text }, { name: "qa-sheet.md", type: "QA", content: "Verify the agreed scope" }] });
+  });
+  const running = (f.studio as any).drive(run); await until(() => release);
+  await f.studio.dispatch("run.message", { id: run.id, stepId: "planner", message: "Include concurrent requests", mode: "queue" });
+  release(); await running; const done = f.store.run(run.id)!;
+  assert.deepEqual(calls, ["Initial plan", "Include concurrent requests"]);
+  assert.equal(done.status, "waiting_review"); assert.equal(done.index, 1); assert.equal(done.steps[1].status, "queued");
+  assert.equal(done.artifacts.find(item => item.name === "implementation-plan.md")!.content, "Include concurrent requests");
+});
+
+test("Adjusting work interrupts the exact turn and drains foreground tools before the priority instruction", async t => {
+  const f = await fixture(t), original = structuredClone(f.run); original.steps[1].agent.permissionLevel = "bypass"; original.steps[1].agent.tools.push("shell"); f.store.saveRun(original, "fixture");
+  const calls: string[] = [], interrupts: Wire[] = []; let active: Run, tool: Promise<unknown>;
+  const host = { stop: async () => {}, client: { call: async (method: string, params: Wire) => {
+    assert.equal(method, "turn/interrupt"); interrupts.push(params);
+    (f.studio as any).codexEvent(active, { method: "turn/completed", params: { threadId: "provider-coder", turn: { id: params.turnId, status: "interrupted" } } }); return {};
+  } } };
+  t.mock.method(f.studio as any, "codexTurn", async (run: Run, step: Step, _prompt: string, tools: Toolbox) => {
+    active = run; calls.push(run.activeMessage?.message || "Initial work");
+    if (calls.length === 1) {
+      (f.studio as any).hosts.set(`${run.id}-${step.agent.auth}`, host); step.activeTurnId = "original-turn";
+      const stopped = new Promise<Wire>((resolve, reject) => (f.studio as any).turns.set(step.providerThreadId, { resolve, reject }));
+      tool = tools.call("studio_shell", { command: "printf started > started.txt; sleep 30; printf obsolete > unwanted.txt", timeoutSeconds: 40, background: false });
+      await stopped; throw new Error("Codex turn interrupted.");
+    }
+    assert.equal((await tool as any).success, false);
+    assert.equal(await readFile(join(f.cwd, "unwanted.txt"), "utf8").catch(() => undefined), undefined);
+    assert.equal(step.providerThreadId, "provider-coder");
+    return answer(calls.at(-1));
+  });
+  await f.send(); await until(() => f.store.receipts(f.run.id, "coder").length === 0 && active?.steps[1].activeTurnId);
+  for (let i = 0; i < 200 && !await readFile(join(f.cwd, "started.txt"), "utf8").catch(() => undefined); i++) await delay(5);
+  assert.equal(await readFile(join(f.cwd, "started.txt"), "utf8"), "started");
+  await f.studio.dispatch("run.message", { id: f.run.id, stepId: "coder", message: "Later request", mode: "queue" });
+  await f.studio.dispatch("run.message", { id: f.run.id, stepId: "coder", message: "New priority", mode: "interrupt" });
+  const done = await f.idle();
+  assert.deepEqual(interrupts, [{ threadId: "provider-coder", turnId: "original-turn" }]);
+  assert.deepEqual(calls, ["Initial work", "New priority", "Later request"]);
+  assert.equal(done.status, "succeeded"); assert.equal(done.index, 3); assert.equal(done.interruptRequested, undefined);
+});
+
+test("Queued instructions can be removed and stopping a reply cancels the remaining queue", async t => {
+  const f = await fixture(t); let active: Run, release!: () => void; const calls: string[] = [];
+  t.mock.method(f.studio as any, "codexTurn", async (run: Run) => { active = run; calls.push("turn"); await new Promise<void>(resolve => { release = resolve; }); return answer(); });
+  await f.send(); await until(() => release);
+  const queued = await f.studio.dispatch("run.message", { id: f.run.id, stepId: "coder", message: "Do not execute this", mode: "queue" }) as Run;
+  await f.studio.dispatch("run.control", { id: f.run.id, action: "remove-message", messageId: queued.pendingMessages![0].id });
+  assert.equal(active!.pendingMessages!.length, 0);
+  await f.studio.dispatch("run.message", { id: f.run.id, stepId: "coder", message: "Cancel on stop", mode: "queue" });
+  await f.studio.dispatch("run.control", { id: f.run.id, action: "stop-message" }); release(); const done = await f.idle();
+  assert.equal(calls.length, 1); assert.deepEqual(done.pendingMessages, []);
+  assert(done.steps[1].messages.some(item => /queued instruction\(s\) were cancelled/.test(item.text)));
+});
+
+test("Unacknowledged interruptions retain pending instructions and never start another turn", async t => {
+  const f = await fixture(t); let active: Run, calls = 0;
+  const host = { stop: async () => {}, client: { call: async () => { throw new Error("Disconnected"); } } };
+  t.mock.method(f.studio as any, "codexTurn", async (run: Run, step: Step) => {
+    calls++; active = run; step.activeTurnId = "unconfirmed"; (f.studio as any).hosts.set(`${run.id}-${step.agent.auth}`, host);
+    return new Promise<string>((resolve, reject) => (f.studio as any).turns.set(step.providerThreadId, { resolve, reject }));
+  });
+  await f.send(); await until(() => active);
+  await f.studio.dispatch("run.message", { id: f.run.id, stepId: "coder", message: "Never replay automatically", mode: "interrupt" });
+  const done = await f.idle(); assert.equal(done.status, "needs_reconciliation"); assert.equal(done.pendingMessages?.length, 1); assert.equal(calls, 1);
+  const recovered = await f.studio.dispatch("run.reconcile", { id: f.run.id }) as Run;
+  assert.equal(recovered.status, "needs_reconciliation"); assert.match(recovered.note, /No queued instruction was replayed/);
+});
+
+test("Adjusting at a tool approval rejects the old command without granting permission", async t => {
+  const f = await fixture(t), original = structuredClone(f.run); original.steps[1].agent.permissionLevel = "ask"; original.steps[1].agent.tools.push("shell"); f.store.saveRun(original, "fixture");
+  let calls = 0;
+  t.mock.method(f.studio as any, "codexTurn", async (_run: Run, _step: Step, _prompt: string, tools: Toolbox) => {
+    if (++calls === 1) {
+      const result = await tools.call("studio_shell", { command: "printf forbidden > unapproved.txt", timeoutSeconds: 1, background: false });
+      assert.equal(result.success, false); throw new Error("Original command rejected");
+    }
+    assert.equal((await tools.call("studio_read", { path: "README.md" })).success, true); return answer("Read the current state without executing the command");
+  });
+  await f.send(); await until(() => f.store.run(f.run.id)!.approval?.kind === "shell");
+  const approvalId = f.store.run(f.run.id)!.approval!.id;
+  await f.studio.dispatch("run.message", { id: f.run.id, stepId: "coder", message: "Read instead", mode: "interrupt" });
+  const done = await f.idle(); assert.equal(calls, 2); assert.equal(done.approval, undefined);
+  assert.equal(await readFile(join(f.cwd, "unapproved.txt"), "utf8").catch(() => undefined), undefined);
+  const events = f.store.db.prepare("SELECT value FROM events WHERE kind = 'approval.resolved'").all() as { value: string }[];
+  assert(events.some(row => { const event = JSON.parse(row.value); return event.id === approvalId && !event.accepted; }));
+});
+
+test("Restarted queues remain visible without replaying or recovering the previous turn as the new answer", async t => {
+  const f = await fixture(t), run = structuredClone(f.run); run.status = "running"; run.acceptingMessages = true;
+  run.steps[1].status = "running"; run.steps[1].lastTurnId = "previous-completed-turn";
+  run.activeMessage = { id: "submission-unknown", stepId: "coder", message: "Check the new change", mode: "queue", createdAt: new Date().toISOString() };
+  f.store.saveRun(run, "fixture.interrupted");
+  const restarted = new Studio(f.store, f.root, join(f.root, "restart-sockets"));
+  try {
+    assert.equal(f.store.run(run.id)!.acceptingMessages, false);
+    const recovered = await restarted.dispatch("run.reconcile", { id: run.id }) as Run;
+    assert.equal(recovered.status, "needs_reconciliation"); assert.deepEqual(recovered.activeMessage, run.activeMessage);
+    assert.match(recovered.note, /No queued instruction was replayed/);
+  } finally { await restarted.close(); }
+});
+
+test("Late tool requests from an interrupted Codex turn cannot execute in its replacement turn", async t => {
+  const f = await fixture(t), run = structuredClone(f.run); run.status = "running"; run.index = 1; run.steps[1].status = "running"; run.steps[1].activeTurnId = "new-turn";
+  let rejected = false;
+  const host = { client: { reject: (_id: string, message: string) => { rejected = true; assert.match(message, /inactive turn/); } } };
+  await (f.studio as any).codexRequest(run, host, { id: "late-call", method: "item/tool/call", params: { threadId: "provider-coder", turnId: "old-turn", tool: "studio_write", arguments: { path: "README.md", content: "Obsolete" } } });
+  assert(rejected); assert.equal(await readFile(join(f.cwd, "README.md"), "utf8"), "Original");
+});
