@@ -1,5 +1,5 @@
 import { t, html, attrs, locale, setLanguage } from "./i18n.js";
-import { flowSchema, revisionGroups } from "../../packages/contracts/index.ts";
+import { flowSchema, avatarSchema, revisionGroups } from "../../packages/contracts/index.ts";
 import { roles, models, prompts, initialState, initializeFlows } from "../../packages/contracts/defaults.js";
 import { initial, StudioEngine, request, queueSettings, flush, reset, removeProject, importLocal, saveStatus } from "./runtime.js";
 import "./skills.js";
@@ -11,6 +11,8 @@ import "./markdown.css";
 import "./session-focus.css";
 import "./session-chat.css";
 import "./run-map.css";
+import { agentAvatars, agentAvatar } from "./agent-avatars.js";
+import "./agent-avatars.css";
 import "./delegation.css";
 import "./revision-loops.css";
 import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
@@ -108,8 +110,8 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   const selected = (actual, expected) => actual === expected ? " selected" : "";
   const providerName = provider => provider === "codex" ? "Codex" : "Claude Code";
   const authName = auth => t(auth === "api" ? "API key" : "Subscription");
-  const agentStyle = agent => `--agent-color:${roles[agent.role].color};--agent-bg:${roles[agent.role].background}`;
-  const agentIcon = (agent, large = false, mood = "") => html`<span class="agent-icon${large ? " large" : ""}${mood ? ` is-${mood}` : ""}" data-role="${agent.role}" style="${agentStyle(agent)}"><span class="agent-eyes"><i></i><i></i></span>${icon(roles[agent.role].icon, "agent-badge")}</span>`;
+  const agentStyle = agent => { const { color, background } = agentAvatars[agentAvatar(agent)]; return `--agent-color:${color};--agent-bg:${background}`; };
+  const agentIcon = (agent, large = false, mood = "") => html`<span class="agent-icon${large ? " large" : ""}${mood ? ` is-${mood}` : ""}" data-role="${agent.role}" data-avatar="${agentAvatar(agent)}" style="${agentStyle(agent)}"><svg class="agent-body" viewBox="0 0 100 100" aria-hidden="true">${agentAvatars[agentAvatar(agent)].body}</svg><span class="agent-eyes"><i></i><i></i></span>${icon(roles[agent.role].icon, "agent-badge")}</span>`;
   const brandMark = html`<svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="12.5" cy="13.5" r="8.5" fill="#dccfff" stroke="#2b2238" stroke-width="1.6"/><circle cx="23.5" cy="13.5" r="8.5" fill="#c4efd9" stroke="#2b2238" stroke-width="1.6"/><circle cx="18" cy="23" r="9" fill="#ffd0e1" stroke="#2b2238" stroke-width="1.6"/><ellipse cx="15.2" cy="22.5" rx="1.3" ry="1.8" fill="#2b2238"/><ellipse cx="20.8" cy="22.5" rx="1.3" ry="1.8" fill="#2b2238"/></svg>`;
   const tints = ["lavender", "sky", "mint", "butter", "rose", "peach"];
   const tintOf = text => tints[[...String(text)].reduce((sum, character) => sum + character.charCodeAt(0), 0) % tints.length];
@@ -524,6 +526,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   }
   function agentForm(agent) {
     return html`<form id="agent-preset-form" class="agent-form" data-form="agent" data-id="${escape(agent.id)}"><div class="field agent-name-field"><label for="agent-name">Name</label><input id="agent-name" name="name" value="${escape(agent.name)}" maxlength="40" required></div>
+      <fieldset class="agent-avatar-field" style="${agentStyle(agent)}"><legend>Agent appearance</legend><div class="avatar-options">${avatarSchema.options.map(value => html`<label class="avatar-choice" style="${agentStyle({ ...agent, avatar: value })}"><input type="radio" name="avatar" value="${value}"${(agent.avatar || "role") === value ? " checked" : ""}><span class="avatar-choice-body">${agentIcon({ ...agent, avatar: value }, true)}<span>${t(agentAvatars[value].label)}</span></span></label>`).join("")}</div><p>Each shape has its own colors. Your choice also colors the agent card.</p></fieldset>
       <div class="field prompt-field"><label for="agent-prompt">Instructions</label><textarea id="agent-prompt" name="prompt" rows="4" maxlength="2500" required>${escape(agent.prompt)}</textarea></div>
       <div class="field"><div class="agent-field-heading"><label for="agent-connection">AI connection</label></div><select id="agent-connection" name="connection">${["codex", "claude"].flatMap(provider => ["subscription", "api"].map(auth => html`<option value="${provider}|${auth}"${selected(`${agent.provider}|${agent.auth}`, `${provider}|${auth}`)}>${providerName(provider)} / ${authName(auth)}</option>`)).join("")}</select></div>
       <div class="field"><div class="agent-field-heading"><label for="agent-model">Model</label>${button("refresh-models", "Refresh models", "reset", "small")}</div><select id="agent-model" name="model">${modelOptions(agent.provider, agent.auth, agent.model)}</select><small>Models come from your connection. Aliases follow runtime updates; Default uses the runtime selection.</small></div>
@@ -1738,7 +1741,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       const prompt = values.get("prompt").trim();
       if (!name || !prompt) return toast("Add a name and instructions before saving.");
       const [provider, auth] = values.get("connection").split("|");
-      Object.assign(agent, { name, prompt, provider, auth, model: values.get("model"), permissionLevel: values.get("permissionLevel"), codexFastMode: form.elements.codexFastMode.value, delegation: { enabled: values.has("delegationEnabled"), maxChildren: Number(values.get("maxChildren")), allowedAgentIds: values.getAll("allowedAgentIds") }, tools: [...form.querySelectorAll('[name="tools"]:checked')].map(input => input.value), skillBindings: JSON.parse(values.get("skillBindings")) });
+      Object.assign(agent, { name, prompt, avatar: values.get("avatar"), provider, auth, model: values.get("model"), permissionLevel: values.get("permissionLevel"), codexFastMode: form.elements.codexFastMode.value, delegation: { enabled: values.has("delegationEnabled"), maxChildren: Number(values.get("maxChildren")), allowedAgentIds: values.getAll("allowedAgentIds") }, tools: [...form.querySelectorAll('[name="tools"]:checked')].map(input => input.value), skillBindings: JSON.parse(values.get("skillBindings")) });
       persist(); if (modal.open) closeModal(); render(); toast(engine.activeRuns.size ? "Preset saved. The active run keeps its original settings." : "Preset saved. Your next run will use these settings.");
     }
     else if (form.dataset.form === "skill-sources") {

@@ -11,7 +11,7 @@ test("Agent views follow live status and open sessions without changing the run"
   const settings = settingsSchema.parse({ ...initialState(), language: "ko", skillRoots: [] });
   settings.projects = [{ id: "map-project", name: "Map project", path: "/fixture", execution: { mode: "local", branchName: "" } }];
   settings.activeProjectId = "map-project";
-  const agents = settings.agents.slice(0, 4).map((agent, index) => ({ ...agent, name: ["Planner", "Coder", "Reviewer", "Tester"][index] }));
+  const agents = settings.agents.slice(0, 4).map((agent, index) => ({ ...agent, ...(index === 2 ? { avatar: "flower" as const } : {}), name: ["Planner", "Coder", "Reviewer", "Tester"][index] }));
   const start = new Date(Date.now() - 60000).toISOString(), end = new Date(Date.now() - 30000).toISOString();
   const planReview = { id: "review-1", stepId: "step-0", kind: "checkpoint" as const, artifactIds: [], fingerprint: "fingerprint", version: 1, returnTo: agents[0].id, lockOutputs: true, summary: "Review this plan", createdAt: end, codeReference: "fixture-code" };
   const run: Run = {
@@ -75,6 +75,9 @@ test("Agent views follow live status and open sessions without changing the run"
   await expect(character(1)).toHaveAttribute("data-status", "running");
   await expect(character(1).locator(".agent-icon")).toHaveClass(/is-running/);
   await expect(character(2)).toHaveAttribute("data-status", "queued");
+  await expect(character(0).locator(".agent-icon")).toHaveAttribute("data-avatar", "sprout");
+  await expect(character(1).locator(".agent-icon")).toHaveAttribute("data-avatar", "robot");
+  await expect(character(2).locator(".agent-icon")).toHaveAttribute("data-avatar", "flower");
   await expect(character(0)).toHaveAttribute("title", /계획 확정/);
   await expect(page.locator(".run-map .node, .run-map .connections-svg, .run-map .zoom-controls")).toHaveCount(0);
   await expect(character(0)).toHaveText("Planner완료");
@@ -95,6 +98,7 @@ test("Agent views follow live status and open sessions without changing the run"
   run.steps[0].id = "planner-3"; run.steps[0].attempt = 3; run.steps[1].status = "queued";
   run.status = "waiting_review"; run.review = { ...planReview, id: "review-3", stepId: "planner-3", version: 3 }; publish();
   await expect(character(0)).toHaveAttribute("data-status", "waiting_review");
+  await expect(character(1).locator(".agent-eyes i").first()).toHaveCSS("height", "4px");
   await expect(character(0).locator(".character-status")).toHaveText("검토 필요");
   await expect(character(0)).not.toHaveAttribute("title", /계획 확정/);
   await character(0).click();
