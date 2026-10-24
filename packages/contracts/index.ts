@@ -1,9 +1,11 @@
 import { z } from "zod";
 
 export const roleSchema = z.enum(["planner", "coder", "reviewer", "backend", "frontend", "documenter"]);
+export const avatarSchema = z.enum(["role", "round", "square", "pebble", "cat", "bunny", "bear", "robot", "ghost", "star", "cloud", "sprout", "flower"]);
 export const bindingSchema = z.object({ id: z.string().min(1).max(100), name: z.string().max(200), version: z.string().regex(/^[a-f0-9]{64}$/), fileCount: z.number().optional() });
 export const agentSchema = z.object({
   id: z.string().min(1).max(100), role: roleSchema, name: z.string().trim().min(1).max(40),
+  avatar: avatarSchema.optional(),
   provider: z.enum(["codex", "claude"]), auth: z.enum(["subscription", "api"]), model: z.string().min(1).max(100),
   permissionLevel: z.enum(["ask", "read-only", "project", "bypass"]).default("ask"),
   codexFastMode: z.enum(["default", "on", "off"]).default("default"),
