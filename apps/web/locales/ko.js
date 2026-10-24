@@ -758,5 +758,16 @@ export default {
   "{0}s elapsed": "{0}초 경과",
   "{0}m {1}s elapsed": "{0}분 {1}초 경과",
   "0s elapsed": "0초 경과",
-  " / {0} operations": " / 작업 {0}개"
+  " / {0} operations": " / 작업 {0}개",
+  "Concurrent tasks": "동시 실행 작업 수",
+  "Maximum concurrent tasks": "최대 동시 실행 작업 수",
+  "Concurrency settings": "동시 실행 설정",
+  "Run tasks in separate projects or worktrees. Paused tasks and tasks waiting for approval or review also count toward this limit. Lowering it does not stop existing tasks.": "서로 다른 프로젝트나 워크트리에서 동시에 실행합니다. 일시정지, 승인 대기, 검토 대기 작업도 개수에 포함됩니다. 한도를 줄여도 기존 작업은 중단하지 않습니다.",
+  "{0} active / limit {1}": "진행 중 {0}개 / 최대 {1}개",
+  "{0} active / limit {1} {2}": "진행 중 {0}개 / 최대 {1}개 {2}",
+  "{0} tasks": "{0}개",
+  "View active tasks": "진행 중인 작업 보기",
+  "Only one run can be active at a time. Change Concurrent tasks in Defaults to allow more.": "현재 동시 실행 한도는 1개입니다. 기본 설정에서 동시 실행 작업 수를 늘려 주세요.",
+  "The concurrent task limit is reached. Finish a task or increase the limit in Defaults.": "동시 실행 한도에 도달했습니다. 작업을 완료하거나 기본 설정에서 한도를 늘려 주세요.",
+  "Another task uses this folder or an overlapping folder. Choose New worktree or a different project.": "다른 작업이 이 폴더 또는 겹치는 폴더를 사용 중입니다. 새 워크트리나 다른 프로젝트를 선택해 주세요."
 };

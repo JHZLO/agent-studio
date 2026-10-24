@@ -962,3 +962,5 @@ dialog::backdrop { background: #2b223852; backdrop-filter: blur(4px); }
 html:lang(ko) { word-break: keep-all; overflow-wrap: anywhere; }
 .language-field { width: 180px; flex-shrink: 0; }
 @media (max-width: 600px) { .language-field { width: 130px; } }
+
+.concurrency-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0; color: var(--muted); font-size: 12px; }

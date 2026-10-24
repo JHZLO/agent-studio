@@ -1,3 +1,4 @@
+import { activeStatuses } from "../../packages/contracts/index.ts";
 import { t, setLanguage } from "./i18n.js";
 let csrf;
 let revision = 0;
@@ -43,8 +44,8 @@ export async function request(path, body) {
   throw new Error("The local API could not be reached.");
 }
 const settingsOnly = state => {
-  const { version, agents, flows, activeFlowId, projects, activeProjectId, skillRoots, approvalRequired, brief, navigationCollapsed, language } = state;
-  return structuredClone({ version, agents, flows, activeFlowId, projects, activeProjectId, skillRoots, approvalRequired, brief, navigationCollapsed, language });
+  const { version, agents, flows, activeFlowId, projects, activeProjectId, skillRoots, approvalRequired, brief, navigationCollapsed, language, maxConcurrentRuns } = state;
+  return structuredClone({ version, agents, flows, activeFlowId, projects, activeProjectId, skillRoots, approvalRequired, brief, navigationCollapsed, language, maxConcurrentRuns });
 };
 export function queueSettings(state) {
   pendingState = settingsOnly(state); announceSave();
@@ -72,11 +73,22 @@ export async function importLocal(selection) {
 }
 
 export class StudioEngine {
-  constructor(onChange, run = null) { this.onChange = onChange; this.run = run; this.closed = false; this.seq = initial.state.eventSeq; this.connect(); }
-  isActive() { return this.run && ["queued", "running", "paused", "waiting_approval", "waiting_review", "cancelling", "needs_reconciliation"].includes(this.run.status); }
-  update(run) {
-    if (run && this.run?.id === run.id && run.eventSeq < this.run.eventSeq) return;
-    this.run = run; this.onChange(structuredClone(run));
+  constructor(onChange, run = null, activeRuns = [], seq = initial.state.eventSeq) {
+    this.onChange = onChange; this.run = run; this.closed = false; this.seq = seq;
+    this.activeRuns = new Map(activeRuns.filter(item => this.isActive(item)).map(item => [item.id, item]));
+    if (this.isActive(run)) this.activeRuns.set(run.id, run);
+    this.versions = new Map([...activeRuns, ...(run ? [run] : [])].map(item => [item.id, item.eventSeq]));
+    this.connect();
+  }
+  isActive(run = this.run) { return !!run && activeStatuses.includes(run.status); }
+  atCapacity(limit) { return this.activeRuns.size >= limit; }
+  usesProject(id) { return [...this.activeRuns.values()].some(run => run.project.id === id); }
+  update(run, latest = false) {
+    if (!run || run.eventSeq < (this.versions.get(run.id) ?? -1)) return;
+    this.versions.set(run.id, run.eventSeq);
+    if (this.isActive(run)) this.activeRuns.set(run.id, run); else this.activeRuns.delete(run.id);
+    if (latest || !this.run || this.run.id === run.id || run.createdAt > this.run.createdAt) this.run = run;
+    this.onChange(structuredClone(run));
   }
   connect() {
     if (this.closed) return;
@@ -91,29 +103,36 @@ export class StudioEngine {
       events.close();
       if (this.closed) return;
       this.reconnect = setTimeout(async () => {
-        try { const { state } = await bootstrap(); this.seq = state.eventSeq; this.update(state.run); } catch {}
+        try {
+          const previous = [...this.activeRuns.keys()];
+          const { state } = await bootstrap(); this.seq = state.eventSeq;
+          const current = new Map([...(state.activeRuns || []), ...(state.run ? [state.run] : [])].map(run => [run.id, run]));
+          for (const id of previous) if (!current.has(id)) { try { current.set(id, await request("/api/runs/read", { id })); } catch {} }
+          this.activeRuns.clear();
+          for (const run of current.values()) this.update(run, run.id === state.run?.id);
+        } catch {}
         this.connect();
       }, 1500);
     };
   }
   async start({ brief, project, flow }) {
     await flush();
-    const run = await request("/api/runs/start", { brief, projectId: project.id, flowId: flow.id }); this.update(run); return run;
+    const run = await request("/api/runs/start", { brief, projectId: project.id, flowId: flow.id }); this.update(run, true); return run;
   }
-  async control(action) {
-    try { const run = await request("/api/runs/control", { id: this.run.id, action, approvalId: this.run.approval?.id }); this.update(run); }
+  async control(action, target = this.run) {
+    try { const run = await request("/api/runs/control", { id: target.id, action, approvalId: target.approval?.id }); this.update(run); }
     catch (error) { window.dispatchEvent(new CustomEvent("studio-error", { detail: error.message })); }
   }
-  async review(action, feedback = "") {
-    const review = this.run.review;
+  async review(action, feedback = "", target = this.run) {
+    const review = target.review;
     if (!review) return;
-    try { this.update(await request("/api/runs/control", { id: this.run.id, action, reviewId: review.id, fingerprint: review.fingerprint, feedback })); }
+    try { this.update(await request("/api/runs/control", { id: target.id, action, reviewId: review.id, fingerprint: review.fingerprint, feedback })); }
     catch (error) { window.dispatchEvent(new CustomEvent("studio-error", { detail: error.message })); }
   }
-  pause() { return this.control("pause"); }
-  resume() { return this.control("resume"); }
-  cancel() { return this.control("cancel"); }
-  approve() { return this.control("approve"); }
-  async reconcile() { try { this.update(await request("/api/runs/reconcile", { id: this.run.id })); } catch (error) { window.dispatchEvent(new CustomEvent("studio-error", { detail: error.message })); } }
+  pause(run = this.run) { return this.control("pause", run); }
+  resume(run = this.run) { return this.control("resume", run); }
+  cancel(run = this.run) { return this.control("cancel", run); }
+  approve(run = this.run) { return this.control("approve", run); }
+  async reconcile(run = this.run) { try { this.update(await request("/api/runs/reconcile", { id: run.id })); } catch (error) { window.dispatchEvent(new CustomEvent("studio-error", { detail: error.message })); } }
   dispose() { this.closed = true; this.events?.close(); clearTimeout(this.reconnect); }
 }
