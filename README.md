@@ -26,6 +26,12 @@ Open **http://127.0.0.1:4183/**. Setup installs the pinned Node and pnpm toolcha
 
 API keys are kept in runner memory. Enter them again after a runner restart. Subscription credentials remain in the official CLI's credential store. Disconnecting a connection in Studio does not log the CLI out. Billing modes never switch automatically.
 
+## Display language
+
+Choose **Defaults > Display language** to switch between English and Korean. The choice is saved in this workspace's local SQLite database and survives reloads and workspace resets. Existing workspaces default to English.
+
+Menus, settings, task controls, status labels, dates, and counts follow the selected language. Project names, agent names, instructions, skill content, conversations, and artifacts retain their original text. Provider diagnostics and terminal output remain as reported by the runtime. Changing the UI language does not change agent instructions or response language.
+
 ## Agent execution settings
 
 Open **Agent library > Edit agent**. Changes apply to future runs. Active runs keep their saved settings, available under **Handoff**.
