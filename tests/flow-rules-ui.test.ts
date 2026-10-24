@@ -138,7 +138,7 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   await page.getByRole("button", { name: "Review outputs", exact: true }).click();
   reviewerPasses = true;
   await page.locator("#review-feedback").fill("Use an atomic claim before processing");
-  await page.getByRole("button", { name: "Request revision", exact: true }).click();
+  await page.getByRole("button", { name: "Run one more revision", exact: true }).click();
   await expect(page.getByRole("button", { name: "Approve and continue", exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole("button", { name: "Approve and continue", exact: true })).toBeVisible();

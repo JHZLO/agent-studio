@@ -1,5 +1,5 @@
 import { t, html, attrs, locale, setLanguage } from "./i18n.js";
-import { flowSchema } from "../../packages/contracts/index.ts";
+import { flowSchema, revisionGroups } from "../../packages/contracts/index.ts";
 import { roles, models, prompts, initialState, initializeFlows } from "../../packages/contracts/defaults.js";
 import { initial, StudioEngine, request, queueSettings, flush, reset, removeProject, importLocal, saveStatus } from "./runtime.js";
 import "./skills.js";
@@ -11,6 +11,7 @@ import "./markdown.css";
 import "./session-focus.css";
 import "./session-chat.css";
 import "./run-map.css";
+import "./revision-loops.css";
 import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
 (() => {
   "use strict";
@@ -33,7 +34,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     view: "home", selected: null, artifactId: null, pendingOrder: null,
     expandedRunId: null, openArtifacts: [], artifactFormat: "preview", focusPane: "conversation", focusSplit: 44, focusScroll: 0,
     sourceDocuments: [], fileBrowser: null, fileBrowserActive: false, fileLoading: false, fileError: "", fileRequest: 0,
-    runLayout: "details", sessionTab: "conversation", reviewDraft: "", reviewId: null, messageDrafts: {}, messageModes: {}, sendingMessages: new Set(), step: 0, followRun: true, historyId: null,
+    runLayout: "details", sessionTab: "conversation", reviewDraft: "", reviewId: null, messageDrafts: {}, messageModes: {}, sendingMessages: new Set(), step: 0, followRun: true, historyId: null, attemptId: null,
     linkFrom: null, zoom: null, connectProvider: "codex", connectAuth: "subscription",
     skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", editingAgentId: null, starting: false,
     navigationOpen: false, navigationActions: false, expandedProjects: new Set([state.activeProjectId].filter(Boolean)),
@@ -289,6 +290,8 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     if (terminalElement && retainedTerminal?.dataset.session === terminalElement.dataset.session) terminalElement.replaceWith(retainedTerminal);
     if (terminalElement) mountTerminal(currentRun().id, document.getElementById("studio-terminal")); else closeTerminalView();
     syncNavigation();
+    const ruleForm = document.getElementById("flow-rule-form");
+    if (ruleForm) updateLoopPath(ruleForm);
     clearInterval(sessionClockTimer);
     updateSessionClocks();
     if (app.querySelector('[data-session-clock][data-live="true"]')) sessionClockTimer = setInterval(updateSessionClocks, 1000);
@@ -369,9 +372,16 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       const rule = currentFlow().rules?.find(item => item.after === id);
       nodes += html`<div class="node ${ui.selected === id ? "selected" : ""}" style="${agentStyle(agent)};left:${pos.x}px;top:${pos.y}px"><button class="node-body" data-action="select-agent" data-id="${escape(id)}" aria-label="Step settings for ${escape(agent.name)}" aria-pressed="${ui.selected === id}"><span class="node-top">${agentIcon(agent)}<span class="node-name">${escape(agent.name)}</span></span><span class="node-output">${t(roleOutputs[agent.role])}</span><span class="node-bottom"><span class="node-status">${providerName(agent.provider)}</span><span class="node-number">${String(index + 1).padStart(2, "0")}</span></span></button><button class="port ${inputSide}" data-action="connect-to" data-id="${escape(id)}" aria-label="Connect to ${escape(agent.name)}" ></button><button class="port ${outputSide} ${ui.linkFrom === id ? "linking" : ""}" data-action="connect-from" data-id="${escape(id)}" aria-label="Connect from ${escape(agent.name)}" ></button></div>`;
       nodes += html`<button class="flow-rule-chip ${rule?.review && rule.review !== "auto" ? "has-review" : ""}" style="left:${pos.x}px;top:${pos.y + 148}px" data-action="select-agent" data-id="${escape(id)}" aria-label="Configure transition after ${escape(agent.name)}">${icon(rule?.review && rule.review !== "auto" ? "agents" : "arrow")}${rule?.review === "always" ? (rule.lockOutputs ? t("Review + lock") : t("Human review")) : rule?.review === "on_issue" ? t("Review on issues") : t("Automatic")}</button>`;
-      if (rule?.loop) nodes += html`<button class="flow-loop-chip" style="left:${pos.x}px;top:${pos.y + 182}px" data-action="select-agent" data-id="${escape(id)}">${icon("reset")}Back to ${escape(state.agents.find(a => a.id === rule.loop.target)?.name)} / max ${rule.loop.maxCycles}</button>`;
+      if (rule?.loop) {
+        const group = revisionGroups(currentFlow()).find(item => item.target === rule.loop.target);
+        const target = position(currentFlow().workflow.indexOf(rule.loop.target)), lane = group.members.indexOf(id);
+        const top = target.y - 14 - lane * 5, sourceTop = pos.y - 14 - lane * 5;
+        const path = pos.row === target.row ? `M ${pos.x + 140} ${pos.y} V ${top} H ${target.x + 140} V ${target.y}` : `M ${pos.x + 140} ${pos.y} V ${sourceTop} H ${806 - lane * 4} V ${top} H ${target.x + 140} V ${target.y}`;
+        lines += html`<path class="flow-return-line ${ui.selected === id ? "selected" : ""}" d="${path}" marker-end="url(#return-arrowhead)"/>`;
+        nodes += html`<button class="flow-loop-chip" style="left:${pos.x}px;top:${pos.y + 182}px" data-action="select-agent" data-id="${escape(id)}">${icon("reset")}<span class="loop-chip-label">${t`Back to ${escape(state.agents.find(a => a.id === rule.loop.target)?.name)} / max ${rule.loop.maxCycles}`}</span>${group.members.length > 1 ? html`<span class="shared-loop-mark">Shared</span>` : ""}</button>`;
+      }
     });
-    return html`<svg class="connections-svg" viewBox="0 0 820 ${height}" style="height:${height}px" aria-hidden="true"><defs><marker id="arrowhead" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0 0L5 2.5L0 5" fill="none" stroke="#2b2238" stroke-width="1"/></marker></defs>${lines}</svg><div class="flow-caption" style="top:27px">${icon("message")} YOUR BRIEF</div>${nodes}${!currentFlow().workflow.length ? html`<div style="padding:100px 70px"><h2>No agents yet</h2><p style="margin-top:15px">Add an agent to create the first step.</p></div>` : ""}`;
+    return html`<svg class="connections-svg" viewBox="0 0 820 ${height}" style="height:${height}px" aria-hidden="true"><defs><marker id="arrowhead" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0 0L5 2.5L0 5" fill="none" stroke="#2b2238" stroke-width="1"/></marker><marker id="return-arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="#8650ad" stroke-width="1.5"/></marker></defs>${lines}</svg><div class="flow-caption" style="top:27px">${icon("message")} YOUR BRIEF</div>${nodes}${!currentFlow().workflow.length ? html`<div style="padding:100px 70px"><h2>No agents yet</h2><p style="margin-top:15px">Add an agent to create the first step.</p></div>` : ""}`;
   }
 
   function sizeCanvas() {
@@ -405,15 +415,44 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       <label class="flow-lock"><input type="checkbox" name="lockOutputs" ${rule.lockOutputs ? "checked" : ""} ${rule.review !== "always" ? "disabled" : ""}>Lock reviewed outputs</label>
       <div class="field"><label for="flow-return">Human revision returns to</label><select id="flow-return" name="returnTo"><option value="">Loop start or this step</option>${options(choices, rule.returnTo)}</select></div>
       <h3>Automatic revisions</h3><div class="field"><label for="flow-loop">If the result needs changes</label><select id="flow-loop" name="loopTarget"><option value="">Ask for human review</option>${options(choices.slice(0, -1), rule.loop?.target)}</select></div>
+      <div id="flow-loop-members">${loopMembers(agent.id, rule.loop?.target)}</div>
       <div class="field"><label for="flow-cycles">Maximum automatic revisions</label><input id="flow-cycles" type="number" name="maxCycles" min="1" max="10" value="${rule.loop?.maxCycles || 3}" required ${rule.loop ? "" : "disabled"}></div>
       <div class="field"><label for="flow-limit">When the limit is reached</label><select id="flow-limit" name="onLimit" ${rule.loop ? "" : "disabled"}><option value="review"${selected(rule.loop?.onLimit, "review")}>Ask for human review</option><option value="stop"${selected(rule.loop?.onLimit, "stop")}>Stop the task</option></select></div>
       <p class="meta">Pass continues forward. Revisions run before the checkpoint. Scope changes always need review. Execution errors stop the task.</p><p class="form-error" role="alert" hidden></p><button type="submit" class="btn primary full">Save flow rules</button></form>`;
   }
 
+  function loopMembers(sourceId, targetId) {
+    if (!targetId) return "";
+    const flow = currentFlow(), members = new Set([sourceId, ...(revisionGroups(flow).find(group => group.target === targetId)?.members || [])]);
+    return html`<fieldset class="loop-members"><legend>Agents sharing this revision limit</legend>
+      <p class="meta">Any selected agent can send work back. The whole group shares one limit.</p>
+      ${flow.workflow.slice(flow.workflow.indexOf(targetId) + 1).map(id => html`<label><input type="checkbox" name="loopMembers" value="${escape(id)}" ${members.has(id) ? "checked" : ""} ${id === sourceId ? "disabled" : ""}>${escape(state.agents.find(a => a.id === id)?.name)}</label>`).join("")}
+      <div class="loop-path" aria-live="polite"></div></fieldset>`;
+  }
+
+  function updateLoopPath(form) {
+    const path = form.querySelector(".loop-path");
+    if (!path) return;
+    const flow = currentFlow(), target = form.elements.loopTarget.value;
+    const members = [form.dataset.id, ...new FormData(form).getAll("loopMembers")];
+    const end = Math.max(...members.map(id => flow.workflow.indexOf(id)));
+    path.innerHTML = html`<strong>Checks run again after a fix</strong><p>${flow.workflow.slice(flow.workflow.indexOf(target), end + 1).map(id => escape(state.agents.find(a => a.id === id)?.name)).join(" → ")}</p><small>Later steps continue in order. Earlier results stay in history.</small>`;
+  }
+
   async function saveFlowRule(form) {
     const values = new FormData(form), flow = currentFlow();
     const rule = { after: form.dataset.id, review: values.get("review"), lockOutputs: values.has("lockOutputs"), ...(values.get("returnTo") ? { returnTo: values.get("returnTo") } : {}), ...(values.get("loopTarget") ? { loop: { target: values.get("loopTarget"), maxCycles: Number(values.get("maxCycles")), onLimit: values.get("onLimit") } } : {}) };
-    const result = flowSchema.safeParse({ ...flow, rules: [...(flow.rules || []).filter(item => item.after !== rule.after), rule] });
+    let rules = [...(flow.rules || []).filter(item => item.after !== rule.after), rule];
+    if (rule.loop) {
+      const members = new Set([rule.after, ...values.getAll("loopMembers")]);
+      rules = rules.map(item => {
+        if (members.has(item.after)) return { ...item, loop: { ...rule.loop } };
+        if (item.loop?.target === rule.loop.target) { const { loop, ...rest } = item; return rest; }
+        return item;
+      });
+      for (const after of members) if (!rules.some(item => item.after === after)) rules.push({ after, review: "auto", lockOutputs: false, loop: { ...rule.loop } });
+    }
+    const result = flowSchema.safeParse({ ...flow, rules });
     if (!result.success) { const error = form.querySelector(".form-error"); error.textContent = t(result.error.issues[0].message); error.hidden = false; return; }
     flow.rules = result.data.rules; persist(); await flush(); render(); toast("Flow rules saved for new tasks.");
   }
@@ -651,9 +690,10 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     const mood = item => item.status === "running" ? "running" : item.status === "waiting_approval" ? "waiting" : "";
     const actionMark = ["queued", "cancelling"].includes(run.status) ? icon("loader", "spinning") : ["running", "waiting_approval", "paused"].includes(run.status) ? agentIcon(activeStep.agent, true, mood(activeStep)) : icon(run.status === "succeeded" ? "check" : run.status === "failed" ? "alert" : "activity");
     return html`<section class="next-action ${["waiting_approval", "waiting_review"].includes(run.status) ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${t(nextAction)}</h2><p>${detail}</p>${run.approval ? html`<pre class="approval-details">${escape(run.approval.details)}</pre>` : ""}</div><div class="actions">${approvalActions}</div></section>
-      <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Flow v${run.flow.revision || 1}${run.lockedPlan ? t` / Approved plan v${run.lockedPlan.version}` : ""}${Object.entries(run.loopCounts || {}).map(([id, count]) => t` / ${escape(run.steps.find(s => s.agent.id === id)?.agent.name)} revisions ${count}/${run.flow.rules?.find(r => r.after === id)?.loop?.maxCycles}`).join("")}</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => html`<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
+      <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Flow v${run.flow.revision || 1}${run.lockedPlan ? t` / Approved plan v${run.lockedPlan.version}` : ""}${revisionGroups(run.flow).filter(group => run.loopCounts?.[group.key]).map(group => t` / ${escape(run.steps.find(s => s.agent.id === group.target)?.agent.name)} revisions ${run.loopCounts[group.key]}/${group.maxCycles}`).join("")}</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => html`<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
       <div class="run-view-toolbar"><div class="segment run-view-switch" role="group" aria-label="Task view">${[["details", "Detail view", "message"], ["map", "Agent view", "agents"]].map(([layout, label, symbol]) => html`<button type="button" class="${ui.runLayout === layout ? "active" : ""}" data-action="run-layout" data-layout="${layout}" aria-pressed="${ui.runLayout === layout}">${icon(symbol)}${t(label)}</button>`).join("")}</div></div>
-      ${ui.runLayout === "map" ? runMapView(run) : html`<section class="panel run-grid${expanded ? " expanded-workspace" : ""}"${expanded ? ` style="--session-split:${ui.focusSplit}%" data-pane="${ui.focusPane}"` : ""}>${expanded ? focusHeader(run) : ""}<aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2 tabindex="-1">${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, run)}${followControl}${expanded ? "" : button("session-fullscreen", "Full screen", "fit", "small")}</div></div><nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, run) : ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div>${expanded && run.review?.stepId === step.id && run.status === "waiting_review" && ["conversation", "review"].includes(ui.sessionTab) ? html`<div class="focus-review">${reviewControls(run, run.review)}</div>` : ui.sessionTab === "conversation" ? messageComposer(run, step) : ""}<div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${expanded ? html`<div class="session-divider" role="separator" aria-label="Resize conversation and document panels" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65" aria-valuenow="${ui.focusSplit}" tabindex="0"></div>` : ""}${evidenceView(run)}</section>`}`;
+      ${revisionBanner(run)}
+      ${ui.runLayout === "map" ? runMapView(run) : html`<section class="panel run-grid${expanded ? " expanded-workspace" : ""}"${expanded ? ` style="--session-split:${ui.focusSplit}%" data-pane="${ui.focusPane}"` : ""}>${expanded ? focusHeader(run) : ""}<aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2 tabindex="-1">${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, run)}${followControl}${expanded ? "" : button("session-fullscreen", "Full screen", "fit", "small")}</div></div><nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ...(run.revisionHistory?.length ? [["revisions", "Revisions"]] : []), ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, run) : ui.sessionTab === "revisions" ? revisionsView(run) : ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div>${expanded && run.review?.stepId === step.id && run.status === "waiting_review" && ["conversation", "review"].includes(ui.sessionTab) ? html`<div class="focus-review">${reviewControls(run, run.review)}</div>` : ui.sessionTab === "conversation" ? messageComposer(run, step) : ""}<div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${expanded ? html`<div class="session-divider" role="separator" aria-label="Resize conversation and document panels" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65" aria-valuenow="${ui.focusSplit}" tabindex="0"></div>` : ""}${evidenceView(run)}</section>`}`;
   }
 
   function runMapView(run) {
@@ -700,7 +740,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     const canApprove = pending && !["scope_change", "loop_limit"].includes(review.kind);
     const target = run.steps.find(s => s.agent.id === review.returnTo);
     const planning = step?.agent.role === "planner" && review.lockOutputs;
-    return pending ? html`<form data-form="review-feedback" data-id="${review.id}" class="review-feedback"><label for="review-feedback">${planning ? t("Questions or changes for the plan") : t`What should ${escape(target?.agent.name || t("the agent"))} change?`}</label><textarea id="review-feedback" data-id="${review.id}" name="feedback" maxlength="8000" rows="3" placeholder="Describe the changes or the next approach to try..." required>${escape(ui.reviewDraft)}</textarea><p class="meta">A revision returns to ${escape(target?.agent.name)} and reruns later checks. Previous sessions remain in Attempts.</p><div class="review-message-actions">${button("review-message", "Send question", "message", "", "", !run.steps.find(item => item.id === review.stepId)?.providerThreadId || !!run.followup)}<button type="submit" class="btn">${icon("reset")}Request revision</button></div></form><div class="review-actions">${canApprove ? button("review-lock", review.lockOutputs ? "Lock only" : "Approve only", "lock") + button("review-approve", review.lockOutputs ? "Lock and continue" : "Approve and continue", "check", "primary") : html`<p class="meta">Send a revision request to continue, or cancel this task. No further automatic retries will run without your action.</p>`}</div><p class="meta">${review.lockOutputs ? t("Approval locks these exact output versions. ") : ""}Human review does not grant tool permissions.</p>` : html`<p class="meta">${review.action === "approved" ? t`Approved ${new Date(review.resolvedAt).toLocaleString(locale())}.` : escape(review.feedback || "")}</p>`;
+    return pending ? html`<form data-form="review-feedback" data-id="${review.id}" class="review-feedback"><label for="review-feedback">${planning ? t("Questions or changes for the plan") : t`What should ${escape(target?.agent.name || t("the agent"))} change?`}</label><textarea id="review-feedback" data-id="${review.id}" name="feedback" maxlength="8000" rows="3" placeholder="Describe the changes or the next approach to try..." required>${escape(ui.reviewDraft)}</textarea><p class="meta">A revision returns to ${escape(target?.agent.name)} and reruns later checks. Previous sessions remain in Attempts.</p><div class="review-message-actions">${button("review-message", "Send question", "message", "", "", !run.steps.find(item => item.id === review.stepId)?.providerThreadId || !!run.followup)}<button type="submit" class="btn">${icon("reset")}${review.kind === "loop_limit" ? t("Run one more revision") : t("Request revision")}</button>${["issue", "loop_limit"].includes(review.kind) && run.steps.slice(0, run.index).some(item => item.agent.role === "planner") ? button("review-replan", "Revisit plan", "edit", "small") : ""}</div></form><div class="review-actions">${canApprove ? button("review-lock", review.lockOutputs ? "Lock only" : "Approve only", "lock") + button("review-approve", review.lockOutputs ? "Lock and continue" : "Approve and continue", "check", "primary") : html`<p class="meta">Send a revision request to continue, or cancel this task. No further automatic retries will run without your action.</p>`}</div><p class="meta">${review.lockOutputs ? t("Approval locks these exact output versions. ") : ""}Human review does not grant tool permissions.</p>` : html`<p class="meta">${review.action === "approved" ? t`Approved ${new Date(review.resolvedAt).toLocaleString(locale())}.` : escape(review.feedback || "")}</p>`;
   }
 
   function reviewView(run) {
@@ -722,9 +762,58 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       ${run.reviewHistory?.length ? html`<details class="review-history"><summary>Review history (${run.reviewHistory.length})</summary>${run.reviewHistory.map(item => html`<div><strong>${item.action === "approved" ? t("Approved") : t("Revision requested")}</strong><p>${escape(item.feedback || item.summary)}</p><small>${new Date(item.resolvedAt).toLocaleString(locale())}</small></div>`).join("")}</details>` : ""}</div>`;
   }
 
+  function revisionBanner(run) {
+    const latest = run.revisionHistory?.at(-1), review = run.review?.kind === "loop_limit" ? run.review : null;
+    if (!latest && !review) return "";
+    const source = [...run.steps, ...(run.stepHistory || [])].find(step => step.id === (review?.stepId || latest.sourceStepId));
+    const target = run.steps.find(step => step.agent.id === (review?.returnTo || latest.targetAgentId));
+    const group = revisionGroups(run.flow).find(item => item.members.includes(source?.agent.id));
+    const revising = !review && run.status === "running" && run.steps[run.index]?.agent.id === target?.agent.id;
+    return html`<section class="revision-banner ${revising ? "is-revising" : ""}" aria-label="Revision status">
+      ${icon("reset")}<div><strong>${review ? t("Revision limit reached") : t("Latest revision")} / ${escape(source?.agent.name)} → ${escape(target?.agent.name)}</strong>${group ? html`<small class="revision-count">Automatic revisions ${run.loopCounts?.[group.key] || 0}/${group.maxCycles}</small>` : ""}<p>${escape(review?.summary || latest.summary)}</p></div>
+      ${button(review ? "review-open" : "revision-history", review ? "Choose next action" : "View revision history", "arrow", "small")}</section>`;
+  }
+
+  function evidenceArtifact(run, id) {
+    return run?.artifacts.find(artifact => artifact.id === id) || run?.artifacts.find(artifact => {
+      if (artifact.type !== "Tool evidence" || !artifact.verified) return false;
+      try { return JSON.parse(artifact.content).some(receipt => receipt.id === id); } catch { return false; }
+    });
+  }
+
+  function findingCards(findings, run) {
+    return html`<div class="revision-findings">${findings.map(finding => html`<article class="revision-finding">
+      <header><strong>${escape(finding.title)}</strong><span class="badge amber">${escape(t(finding.severity))}</span></header>
+      <code>${escape(finding.id)}</code><p class="meta">${escape(finding.location)}</p>
+      <dl><dt>Reproduction</dt><dd>${escape(finding.reproduction)}</dd><dt>Expected</dt><dd>${escape(finding.expected)}</dd><dt>Observed</dt><dd>${escape(finding.actual)}</dd></dl>
+      ${finding.evidence?.length ? html`<details><summary>Evidence references</summary>${finding.evidence.map(id => { const artifact = evidenceArtifact(run, id); return artifact ? button("artifact", escape(artifact.name), "file", "text small", `data-id="${escape(artifact.id)}"`) : html`<code>${escape(id)}</code>`; }).join("")}</details>` : html`<p class="meta">No evidence references supplied.</p>`}
+    </article>`).join("")}</div>`;
+  }
+
+  function revisionsView(run) {
+    const name = id => escape(run.steps.find(step => step.agent.id === id)?.agent.name || id);
+    return html`<div class="revisions-list"><h3>Revision history</h3><p class="meta">Findings are agent reports. Use the recorded evidence and latest checks to verify a fix.</p>
+      ${[...(run.revisionHistory || [])].reverse().map((revision, index) => html`<details class="revision-record" ${index === 0 ? "open" : ""}>
+        <summary>${name(revision.sourceAgentId)} → ${name(revision.targetAgentId)} <span>${revision.automatic ? t`Automatic revision ${revision.cycle}/${revision.maxCycles}` : t("Human revision")}</span></summary>
+        <small>${new Date(revision.createdAt).toLocaleString(locale())}</small><p>${escape(revision.summary)}</p>
+        ${revision.codeReference ? html`<p class="meta">Checked code: <code>${escape(revision.codeReference.slice(0, 12))}</code></p>` : ""}
+        ${findingCards(revision.findings || [], run)}<div class="artifact-list">${revision.artifactIds.map(id => run.artifacts.find(a => a.id === id)).filter(Boolean).map(artifactRow).join("")}</div>
+        ${button("revision-attempt", "Open source attempt", "message", "small", `data-step-id="${escape(revision.sourceStepId)}"`)}
+      </details>`).join("")}</div>`;
+  }
+
+  function revisionEvidence(run) {
+    const latest = run.revisionHistory?.at(-1), review = run.review?.kind === "loop_limit" ? run.review : null;
+    const ids = review?.artifactIds || latest?.artifactIds;
+    if (!ids) return "";
+    const findings = run.artifacts.findLast(a => ids.includes(a.id) && a.type === "Revision findings");
+    return html`<div class="revision-evidence"><strong>${review ? t("Needs a decision") : t("Latest revision")}</strong><p>${escape(review?.summary || latest.summary)}</p>${findings ? button("artifact", "View reported findings", "file", "small", `data-id="${escape(findings.id)}"`) : ""}${latest ? button("revision-history", "View revision history", "reset", "text small") : ""}</div>`;
+  }
+
   function attemptsView(step, run) {
     const attempts = [...(run.stepHistory || []).filter(item => item.agent.id === step.agent.id), step];
-    return html`<div class="attempts-list"><p class="meta">Each revision uses a fresh session. Earlier conversations and outputs remain available.</p>${attempts.map(item => html`<details ${item.id === step.id ? "open" : ""}><summary>Attempt ${item.attempt || 1} / ${t(statusNames[item.status])} ${sessionClock(item, run, true)}</summary>${item.feedback ? html`<p class="handoff-card">${escape(item.feedback)}</p>` : ""}${item.messages.map(message => html`<div class="message ${message.type}"><div class="message-label">${escape(t(message.type))}</div><div class="message-text">${escape(message.text)}</div></div>`).join("")}${item.finalText ? html`<details><summary>Structured result</summary><pre class="artifact-preview">${escape(item.finalText)}</pre></details>` : ""}<div class="artifact-list">${run.artifacts.filter(a => a.stepId === item.id).map(artifactRow).join("")}</div></details>`).join("")}</div>`;
+    const selectedAttempt = attempts.find(item => item.id === ui.attemptId) || step;
+    return html`<div class="attempts-list"><p class="meta">Each revision uses a fresh session. Earlier conversations and outputs remain available.</p>${attempts.map(item => html`<details data-attempt-id="${escape(item.id)}" ${item.id === selectedAttempt.id ? "open" : ""}><summary>Attempt ${item.attempt || 1} / ${t(statusNames[item.status])} ${sessionClock(item, run, true)}</summary>${item.feedback ? html`<p class="handoff-card">${escape(item.feedback)}</p>` : ""}${item.messages.map(message => html`<div class="message ${message.type}"><div class="message-label">${escape(t(message.type))}</div><div class="message-text">${escape(message.text)}</div></div>`).join("")}${item.finalText ? html`<details><summary>Structured result</summary><pre class="artifact-preview">${escape(item.finalText)}</pre></details>` : ""}<div class="artifact-list">${run.artifacts.filter(a => a.stepId === item.id).map(artifactRow).join("")}</div></details>`).join("")}</div>`;
   }
 
   function terminalView(step, run) {
@@ -887,7 +976,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     const artifact = ui.fileBrowserActive ? null : focusedDocument(run, ui.artifactId);
     const tabs = ui.openArtifacts.map(id => focusedDocument(run, id)).filter(Boolean);
     const markdown = artifact && isMarkdown(artifact);
-    return html`<aside class="evidence-panel focused-evidence" aria-label="Task outputs"><div class="focus-files-bar">${button("all-outputs", "Outputs", "folder", "small focus-output-list", `aria-pressed="${!artifact && !ui.fileBrowserActive}"`)}${button("project-files", "Project files", "code", "small focus-output-list", `aria-pressed="${ui.fileBrowserActive}"`)}<div class="focus-files" role="tablist" aria-label="Open documents">${tabs.map(item => html`<div class="focus-file${item.id === artifact?.id ? " active" : ""}"><button class="focus-file-tab" role="tab" id="file-tab-${escape(item.id)}" aria-controls="focus-document" aria-selected="${item.id === artifact?.id}" tabindex="${item.id === artifact?.id || (!artifact && item === tabs[0]) ? 0 : -1}" data-action="artifact" data-id="${escape(item.id)}" title="${escape(item.name)}" aria-label="${escape(item.name)}">${icon(item.sourcePath || item.type === "Code diff" ? "code" : "file")}${escape(item.sourcePath ? item.name.split(/[\\/]/).at(-1) : item.name)}</button>${button("close-artifact", "", "close", "text icon-only", attrs`data-id="${escape(item.id)}" aria-label="Close ${escape(item.name)}"`)}</div>`).join("")}</div></div>${ui.fileLoading ? html`<p class="focus-file-status" role="status">Loading project files...</p>` : ""}${ui.fileError ? html`<p class="focus-file-status" role="alert">${escape(t(ui.fileError))}</p>` : ""}${ui.fileBrowserActive ? projectFilesView(run) : artifact ? html`<div class="focus-document-toolbar"><div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${artifact.superseded ? t("Previous attempt") : escape(t(artifact.type))}</p></div><div class="focus-document-actions">${markdown ? html`<div class="segment" role="group" aria-label="Document format">${[["preview", "Preview"], ["source", "Markdown source"]].map(([format, label]) => html`<button data-action="focus-format" data-format="${format}" class="${ui.artifactFormat === format ? "active" : ""}" aria-pressed="${ui.artifactFormat === format}">${t(label)}</button>`).join("")}</div>` : ""}${artifact.sourcePath ? button("project-file", "", "reset", "text icon-only", attrs`data-path="${escape(artifact.sourcePath)}" aria-label="Reload current file"`) : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div></div><div id="focus-document" class="evidence-body focus-document-content" data-id="${escape(run.id)}:${escape(artifact.id)}:${ui.artifactFormat}:${artifact.loadedAt || ""}" role="tabpanel" aria-labelledby="file-tab-${escape(artifact.id)}" tabindex="0">${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : markdown && ui.artifactFormat !== "source" ? artifactPreview(artifact) : sourcePreview(artifact)}</div>` : html`<div class="evidence-body"><h3>Outputs</h3><p class="meta">Choose a document to read alongside the conversation.</p>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output">${icon("file")}<span>Waiting for the first output<small>Outputs appear here when an agent produces them.</small></span></div>`}</div>`}</aside>`;
+    return html`<aside class="evidence-panel focused-evidence" aria-label="Task outputs"><div class="focus-files-bar">${button("all-outputs", "Outputs", "folder", "small focus-output-list", `aria-pressed="${!artifact && !ui.fileBrowserActive}"`)}${button("project-files", "Project files", "code", "small focus-output-list", `aria-pressed="${ui.fileBrowserActive}"`)}<div class="focus-files" role="tablist" aria-label="Open documents">${tabs.map(item => html`<div class="focus-file${item.id === artifact?.id ? " active" : ""}"><button class="focus-file-tab" role="tab" id="file-tab-${escape(item.id)}" aria-controls="focus-document" aria-selected="${item.id === artifact?.id}" tabindex="${item.id === artifact?.id || (!artifact && item === tabs[0]) ? 0 : -1}" data-action="artifact" data-id="${escape(item.id)}" title="${escape(item.name)}" aria-label="${escape(item.name)}">${icon(item.sourcePath || item.type === "Code diff" ? "code" : "file")}${escape(item.sourcePath ? item.name.split(/[\\/]/).at(-1) : item.name)}</button>${button("close-artifact", "", "close", "text icon-only", attrs`data-id="${escape(item.id)}" aria-label="Close ${escape(item.name)}"`)}</div>`).join("")}</div></div>${ui.fileLoading ? html`<p class="focus-file-status" role="status">Loading project files...</p>` : ""}${ui.fileError ? html`<p class="focus-file-status" role="alert">${escape(t(ui.fileError))}</p>` : ""}${ui.fileBrowserActive ? projectFilesView(run) : artifact ? html`<div class="focus-document-toolbar"><div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${artifact.superseded ? t("Previous attempt") : escape(t(artifact.type))}</p></div><div class="focus-document-actions">${markdown ? html`<div class="segment" role="group" aria-label="Document format">${[["preview", "Preview"], ["source", "Markdown source"]].map(([format, label]) => html`<button data-action="focus-format" data-format="${format}" class="${ui.artifactFormat === format ? "active" : ""}" aria-pressed="${ui.artifactFormat === format}">${t(label)}</button>`).join("")}</div>` : ""}${artifact.sourcePath ? button("project-file", "", "reset", "text icon-only", attrs`data-path="${escape(artifact.sourcePath)}" aria-label="Reload current file"`) : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div></div><div id="focus-document" class="evidence-body focus-document-content" data-id="${escape(run.id)}:${escape(artifact.id)}:${ui.artifactFormat}:${artifact.loadedAt || ""}" role="tabpanel" aria-labelledby="file-tab-${escape(artifact.id)}" tabindex="0">${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : (markdown && ui.artifactFormat !== "source") || artifact.type === "Revision findings" ? artifactPreview(artifact) : sourcePreview(artifact)}</div>` : html`<div class="evidence-body">${revisionEvidence(run)}<h3>Outputs</h3><p class="meta">Choose a document to read alongside the conversation.</p>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output">${icon("file")}<span>Waiting for the first output<small>Outputs appear here when an agent produces them.</small></span></div>`}</div>`}</aside>`;
   }
 
   function sourcePreview(artifact) {
@@ -935,10 +1024,13 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   function evidenceView(run) {
     if (ui.expandedRunId === run.id) return focusedEvidenceView(run);
     const artifact = run.artifacts.find(item => item.id === ui.artifactId);
-    return html`<aside class="evidence-panel" aria-label="Task outputs"><div class="panel-heading"><h2>${icon("file")}Outputs <span class="badge gray">${run.artifacts.length}</span></h2></div><div class="evidence-body">${artifact ? html`<div class="evidence-navigation">${button("all-outputs", "All outputs", "arrow", "text small back-button")}${isMarkdown(artifact) ? button("open-document", "Read in full", "fit", "text small", `data-id="${escape(artifact.id)}"`) : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${escape(t(artifact.type))}</p>${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : ""}${artifactPreview(artifact)}` : html`<div class="evidence-intro"><h3>See the work behind the status.</h3><p>Plans, changes, and QA evidence appear here as each agent finishes.</p></div>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output ${["running", "queued"].includes(run.status) ? "is-pending" : ""}">${icon("file")}<span>${["running", "queued"].includes(run.status) ? t("Waiting for the first output") : t("No outputs recorded")}<small>Outputs appear here when an agent produces them.</small></span></div>`}`}</div></aside>`;
+    return html`<aside class="evidence-panel" aria-label="Task outputs"><div class="panel-heading"><h2>${icon("file")}Outputs <span class="badge gray">${run.artifacts.length}</span></h2></div><div class="evidence-body">${artifact ? html`<div class="evidence-navigation">${button("all-outputs", "All outputs", "arrow", "text small back-button")}${isMarkdown(artifact) ? button("open-document", "Read in full", "fit", "text small", `data-id="${escape(artifact.id)}"`) : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${escape(t(artifact.type))}</p>${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : ""}${artifactPreview(artifact)}` : html`${revisionEvidence(run)}<div class="evidence-intro"><h3>See the work behind the status.</h3><p>Plans, changes, and QA evidence appear here as each agent finishes.</p></div>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output ${["running", "queued"].includes(run.status) ? "is-pending" : ""}">${icon("file")}<span>${["running", "queued"].includes(run.status) ? t("Waiting for the first output") : t("No outputs recorded")}<small>Outputs appear here when an agent produces them.</small></span></div>`}`}</div></aside>`;
   }
 
   function artifactPreview(artifact) {
+    if (artifact.type === "Revision findings") {
+      try { return findingCards(JSON.parse(artifact.content), currentRun()); } catch {}
+    }
     if (isMarkdown(artifact)) return renderMarkdown(artifact.content);
     return html`<pre class="artifact-preview">${artifact.content.split("\n").map(line => html`<span class="${line.startsWith("+") ? "diff-add" : line.startsWith("-") ? "diff-remove" : ""}">${escape(line)}</span>`).join("\n")}</pre>`;
   }
@@ -1326,19 +1418,32 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     else if (action === "cancel") await engine.cancel(currentRun());
     else if (action === "live-session") { ui.view = "run"; ui.historyId = null; ui.artifactId = null; ui.followRun = true; ui.step = Math.min(state.run?.index || 0, (state.run?.steps.length || 1) - 1); render(); }
     else if (action === "review-approve" || action === "review-lock") await engine.review(action === "review-lock" ? "approve-review-only" : "approve-review", "", currentRun());
+    else if (action === "review-replan") {
+      const form = target.closest("form");
+      if (!form.reportValidity()) return;
+      await engine.review("replan-review", new FormData(form).get("feedback"), currentRun());
+    }
+    else if (action === "revision-history") { ui.runLayout = "details"; ui.sessionTab = "revisions"; render(); }
+    else if (action === "revision-attempt") {
+      const run = currentRun(), step = [...run.steps, ...(run.stepHistory || [])].find(item => item.id === target.dataset.stepId);
+      if (!step) return;
+      ui.step = run.steps.findIndex(item => item.agent.id === step.agent.id); ui.followRun = false; ui.sessionTab = "attempts"; ui.attemptId = step.id; render();
+      const attempt = app.querySelector(`[data-attempt-id="${CSS.escape(step.id)}"]`);
+      if (attempt) { attempt.open = true; attempt.scrollIntoView({ block: "nearest" }); }
+    }
     else if (action === "review-open") { ui.runLayout = "details"; ui.sessionTab = "review"; ui.step = currentRun().steps.findIndex(s => s.id === currentRun().review.stepId); render(); }
     else if (action === "flow-recommended") {
       const flow = currentFlow(), crew = flow.workflow.map(id => state.agents.find(a => a.id === id));
-      const planner = crew.find(a => a.role === "planner"), coder = crew.find(a => a.role === "coder"), reviewer = crew.find(a => a.role === "reviewer"), final = crew.at(-1);
+      const planner = crew.find(a => a.role === "planner"), coder = crew.find(a => a.role === "coder"), final = crew.at(-1);
       const rules = [];
       if (planner) rules.push({ after: planner.id, review: "always", lockOutputs: true, returnTo: planner.id });
-      if (coder && reviewer && flow.workflow.indexOf(coder.id) < flow.workflow.indexOf(reviewer.id)) rules.push({ after: reviewer.id, review: "auto", lockOutputs: false, loop: { target: coder.id, maxCycles: 3, onLimit: "review" } });
+      if (coder) for (const agent of crew.slice(crew.indexOf(coder) + 1)) if (["reviewer", "backend", "frontend"].includes(agent.role)) rules.push({ after: agent.id, review: "auto", lockOutputs: false, loop: { target: coder.id, maxCycles: 3, onLimit: "review" } });
       if (final) {
         const finalRule = rules.find(rule => rule.after === final.id);
         if (finalRule) finalRule.review = "always";
         else rules.push({ after: final.id, review: "always", lockOutputs: false, returnTo: final.id });
       }
-      showModal(t("Use suggested flow rules?"), html`<p>Review and lock the plan, allow up to three Coder / Reviewer revisions, and review the final output. These replace this flow's current rules. Active tasks keep their saved rules.</p>`, button("close-modal", "Keep current rules", "") + button("flow-apply-suggested", "Apply rules", "check", "primary"));
+      showModal(t("Use suggested flow rules?"), html`<p>Review and lock the plan. Reviewers and testers can return to Coder, sharing up to three automatic revisions. Review the final output. These replace this flow's current rules. Active tasks keep their saved rules.</p>`, button("close-modal", "Keep current rules", "") + button("flow-apply-suggested", "Apply rules", "check", "primary"));
       ui.suggestedRules = { flowId: flow.id, rules };
     }
     else if (action === "flow-apply-suggested") {
@@ -1576,6 +1681,12 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     if (!form) return;
     form.elements.lockOutputs.disabled = form.elements.review.value !== "always";
     if (form.elements.lockOutputs.disabled) form.elements.lockOutputs.checked = false;
+    if (event.target.name === "loopTarget") {
+      const group = revisionGroups(currentFlow()).find(item => item.target === form.elements.loopTarget.value);
+      form.querySelector("#flow-loop-members").innerHTML = loopMembers(form.dataset.id, form.elements.loopTarget.value);
+      if (group) { form.elements.maxCycles.value = group.maxCycles; form.elements.onLimit.value = group.onLimit; }
+    }
+    updateLoopPath(form);
     form.elements.maxCycles.disabled = !form.elements.loopTarget.value;
     form.elements.onLimit.disabled = !form.elements.loopTarget.value;
     enhanceSelects(form);

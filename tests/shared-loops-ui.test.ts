@@ -1,0 +1,152 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, extname } from "node:path";
+import { createServer, type ServerResponse } from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
+import { chromium, expect } from "@playwright/test";
+import { initialState } from "../packages/contracts/defaults.js";
+import { settingsSchema, type Run, type Step } from "../packages/contracts/index.ts";
+import { Studio } from "../packages/engine/studio.ts";
+import type { Toolbox } from "../packages/engine/tools.ts";
+import { Store } from "../packages/engine/store.ts";
+
+test("Shared loop controls show return paths, causal history and a human replan", { timeout: 45000 }, async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "studio-flow-ui-"))), cwd = join(root, "project");
+  await mkdir(cwd); await writeFile(join(cwd, "README.md"), "Fixture project");
+  const store = new Store(join(root, "state.sqlite"));
+  const studio = new Studio(store, root, join(root, "sockets"));
+  const settings = settingsSchema.parse(initialState());
+  settings.agents = settings.agents.slice(0, 3).map(agent => ({ ...agent, provider: "codex", tools: ["read"] }));
+  settings.agents.push({ ...settings.agents[2], id: "tester", name: "Tester", role: "backend", tools: ["read", "shell"] });
+  settings.flows = ["main", "other"].map(id => ({ id, name: id === "main" ? "Delivery" : "Other flow", workflow: settings.agents.map(agent => agent.id), rules: [], revision: 1, archived: false }));
+  settings.activeFlowId = "main"; settings.skillRoots = []; settings.approvalRequired = false;
+  settings.projects = [{ id: "fixture", name: "Fixture", path: cwd, execution: { mode: "local", branchName: "" } }]; settings.activeProjectId = "fixture";
+  store.set("settings", settings);
+  store.set("connections", [{ id: "codex-subscription", provider: "codex", auth: "subscription", models: ["default"], connected: true, billingMode: "subscription" }]);
+  studio.connections.assertAgent = async () => {};
+  studio.catalog.scan = async () => ({ skills: [], sources: [], errors: [] }) as any;
+  const calls: Step[] = [];
+  let allPass = false;
+  t.mock.method(studio as any, "codexTurn", async (_run: Run, step: Step, _prompt: string, tools: Toolbox) => {
+    if (step.agent.id === "tester") await tools.call("studio_http", { url: `http://127.0.0.1:${(server.address() as { port: number }).port}/test-evidence`, method: "GET", body: "", headers: {} });
+    calls.push(structuredClone(step));
+    const decision = !allPass && (step.agent.id === "tester" || (step.agent.id === "reviewer" && !step.attempt)) ? "revise" : "pass";
+    const names = step.agent.role === "planner" ? ["implementation-plan.md", "qa-sheet.md"] : [`${step.agent.role}.md`];
+    const result = JSON.stringify({ status: "completed", decision, summary: decision === "pass" ? "Ready for review" : "Fix the duplicate request case", findings: decision === "revise" ? [{ title: "Concurrent duplicate <img src=x>", severity: "high", location: "RewardService.kt:42", reproduction: "Send two requests at the same time", expected: "One reward", actual: "Two rewards", evidence: tools.receipts.map(r => r.id) }] : [], artifacts: names.map(name => ({ name, type: "Report", content: `${name}: draft ${step.attempt || 1}` })) });
+    step.messages.push({ id: step.id, type: "assistant", text: result, time: new Date().toISOString() });
+    return result;
+  });
+  const streams = new Set<ServerResponse>();
+  const methods: Record<string, string> = { settings: "settings.save", catalog: "catalog", snapshots: "snapshots", project: "project", "runs/start": "run.start", "runs/control": "run.control", "runs/read": "run.read" };
+  const server = createServer(async (req, res) => {
+    try {
+      const path = new URL(req.url!, "http://localhost").pathname;
+      if (path === "/test-evidence") { res.end("Recorded test fixture"); return; }
+      if (path === "/api/events") {
+        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" }); res.write(": connected\n\n");
+        streams.add(res); req.on("close", () => streams.delete(res)); return;
+      }
+      if (path.startsWith("/api/")) {
+        let data;
+        if (path === "/api/bootstrap") data = { csrf: "fixture", state: store.state() };
+        else if (path === "/api/status") data = { service: "agent-studio", roots: [] };
+        else {
+          let body = ""; for await (const part of req) body += part;
+          const method = methods[path.slice(5)]; assert(method, `Unexpected test request: ${path}`);
+          data = await studio.dispatch(method, JSON.parse(body || "{}"));
+          if (path === "/api/runs/control") await delay(60);
+        }
+        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); return;
+      }
+      const file = path === "/" ? "index.html" : path.slice(1);
+      assert(!file.includes(".."));
+      const types: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
+      res.writeHead(200, { "Content-Type": types[extname(file)] || "application/octet-stream" }); res.end(await readFile(join(process.cwd(), "dist/web", file)));
+    } catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: (error as Error).message })); }
+  });
+  store.on("event", event => { for (const stream of streams) stream.write(`id: ${event.seq}\nevent: run\ndata: ${JSON.stringify(store.state().run)}\n\n`); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const browser = await chromium.launch(), page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  t.after(async () => { await browser.close(); for (const stream of streams) stream.end(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await studio.close(); store.close(); await rm(root, { recursive: true, force: true }); });
+  page.setDefaultTimeout(5000);
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
+  await expect(page.locator(".sidebar-status")).toContainText("Local skills connected");
+  const choose = async (name: string, value: string) => {
+    await page.getByRole("combobox", { name, exact: true }).click();
+    await page.getByRole("option", { name: value, exact: true }).click();
+  };
+  const flow = () => studio.settings().flows.find(item => item.id === "main")!;
+  const openStep = async (name: string) => page.getByRole("button", { name: `Step settings for ${name}`, exact: true }).click();
+  const saveRule = async () => { await page.getByRole("button", { name: "Save flow rules", exact: true }).click(); await expect(page.locator("#toast")).toHaveText("Flow rules saved for new tasks."); };
+  await page.getByRole("button", { name: "Flows", exact: true }).click();
+  await openStep("Reviewer");
+  await choose("If the result needs changes", "Coder");
+  await page.getByLabel("Tester", { exact: true }).check();
+  await page.getByLabel("Maximum automatic revisions").fill("2");
+  await expect(page.locator(".loop-path")).toContainText("Coder → Reviewer → Tester");
+  await saveRule();
+  assert.equal(flow().rules.filter(r => r.loop).length, 2);
+  await expect(page.locator(".flow-return-line")).toHaveCount(2);
+  await expect(page.locator(".shared-loop-mark")).toHaveCount(2);
+  await page.getByLabel("Tester", { exact: true }).uncheck(); await saveRule();
+  assert.equal(flow().rules.filter(r => r.loop).length, 1);
+  await page.getByLabel("Tester", { exact: true }).check(); await saveRule();
+  await openStep("Tester"); await page.getByLabel("Maximum automatic revisions").fill("1"); await saveRule();
+  assert.ok(flow().rules.filter(r => r.loop).every(r => r.loop?.maxCycles === 1));
+  await page.getByRole("button", { name: "Suggested rules", exact: true }).click();
+  await page.getByRole("button", { name: "Apply rules", exact: true }).click();
+  assert.ok(flow().rules.filter(r => r.loop).every(r => r.loop?.maxCycles === 3));
+  assert.equal(flow().rules.filter(r => r.loop).length, 2);
+  await openStep("Tester"); await page.getByLabel("Maximum automatic revisions").fill("2"); await saveRule();
+  await page.reload(); await page.getByRole("button", { name: "Flows", exact: true }).click();
+  await openStep("Reviewer"); await expect(page.getByLabel("Tester", { exact: true })).toBeChecked();
+  await expect(page.getByLabel("Maximum automatic revisions")).toHaveValue("2");
+  await page.getByRole("button", { name: "Use this flow", exact: true }).click();
+  await page.getByLabel("Task brief", { exact: true }).fill("Fix concurrent duplicate rewards");
+  await page.getByRole("button", { name: "Run task", exact: true }).click();
+  await page.getByRole("button", { name: "Lock and continue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Choose the next revision", exact: true })).toBeVisible();
+  await expect(page.locator(".progress-label")).toContainText("Coder revisions 2/2");
+  assert.equal(store.state().run.loopCounts["shared:coder"], 2);
+  await expect(page.getByRole("button", { name: "Run one more revision", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve and continue", exact: true })).toHaveCount(0);
+  await expect(page.locator(".revision-banner")).toContainText("Tester → Coder");
+  await page.locator(".revision-evidence").getByRole("button", { name: "View revision history", exact: true }).click();
+  await expect(page.locator(".revision-record")).toHaveCount(2);
+  await expect(page.locator(".revision-record").first()).toContainText("Tester → Coder");
+  await expect(page.locator(".revision-record").first()).toContainText("One reward");
+  await expect(page.locator('img[src="x"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Full screen", exact: true }).click();
+  await page.locator(".revision-record").first().getByRole("button", { name: "Open source attempt", exact: true }).click();
+  await expect(page.locator(".attempts-list")).toContainText("Attempt 1");
+  await expect(page.locator(".attempts-list")).toContainText("Attempt 2");
+  await page.getByRole("button", { name: "Outputs", exact: true }).click();
+  await page.locator(".revision-evidence").getByRole("button", { name: "View reported findings", exact: true }).click();
+  await expect(page.locator(".focus-document-content .revision-finding")).toContainText("Two rewards");
+  const sourceStepId = store.state().run.revisionHistory.at(-1).sourceStepId;
+  await expect(page.locator(`[data-attempt-id="${sourceStepId}"]`)).toHaveAttribute("open", "");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Documents", exact: true }).click();
+  await expect.poll(async () => { const box = await page.locator(".revision-finding").last().boundingBox(); return box ? box.x + box.width : Infinity; }).toBeLessThanOrEqual(390);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator(".focus-document-content").getByText("Evidence references", { exact: true }).click();
+  await page.locator(".focus-document-content").getByRole("button", { name: "backend-evidence.json", exact: true }).click();
+  await expect(page.locator("#focus-document")).toContainText("studio_http");
+  await page.getByRole("button", { name: "Exit full screen", exact: true }).click();
+  await page.getByRole("button", { name: "Choose next action", exact: true }).click();
+  allPass = true;
+  await page.getByLabel(/What should Coder change/).fill("Review the transaction boundary with me");
+  await page.getByRole("button", { name: "Revisit plan", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Lock and continue", exact: true })).toBeVisible();
+  assert.equal(store.state().run.lockedPlan, undefined);
+  assert.equal(store.state().run.steps[1].status, "queued");
+  assert.equal(store.state().run.revisionHistory.at(-1).targetAgentId, "planner");
+  await page.getByRole("button", { name: "Lock and continue", exact: true }).click();
+  await page.getByRole("button", { name: "Approve and continue", exact: true }).click();
+  await expect.poll(() => store.state().run.status).toBe("succeeded");
+  assert.equal(store.state().run.loopCounts["shared:coder"], 2);
+  assert.deepEqual(errors, []);
+});
