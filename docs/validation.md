@@ -51,6 +51,18 @@ Checked on 2026-10-24, macOS arm64. The isolated feature source passed type chec
 
 The API-key paths and other operating systems were not exercised for this change. On runner restart or an unconfirmed interruption, pending message text is retained and automatic replay is blocked. Existing file changes are not rolled back by interruption.
 
+## Parallel child agents
+
+Checked on 2026-10-24, macOS arm64. The isolated feature source passed strict TypeScript checks, the production build, and all 145 automated tests. The current workspace, including separate pending avatar and Markdown changes, passed type checking, build, and six focused Chromium checks.
+
+- Workspace tests verify snapshots containing staged, unstaged, and untracked files, unchanged parent Git index, isolated worktrees, successful delta integration, and rejection of conflicting parent edits.
+- Engine tests cover concurrent children, frozen preset and skill configuration, permission intersection, depth and capacity limits, required collection, execution checks after integration, independent approvals, child-only instructions, parent interruption, cancellation, and restart without automatic replay. An action-capable Tester without a file-write tool can provide actual HTTP evidence from its child workspace.
+- Chromium coverage edits delegation settings and routes queued messages, interruption, approvals, drafts, artifacts, and source previews to the selected child. It checks normal and fullscreen layouts and a 390 px viewport. Existing shared revision loops, session conversations, the agent map, and Markdown rendering pass in the combined workspace.
+- A real Codex subscription parent started Codex and Claude subscription children in parallel. Both children observed an uncommitted parent marker in separate worktrees. The writer created a file; the parent inspected the reports, accepted both results, integrated the change, and ran a successful combined shell check.
+- A real Claude subscription parent completed the same mixed-provider scenario. Both probes recorded overlapping child execution, distinct workspaces, successful integration, and a successful final parent status. They used disposable sample repositories and did not run or change user tasks.
+
+The initial full-suite run exposed two fixture assumptions: a recovery test mutated an API projection, and a reduced-motion assertion read an empty style before rendering. The tests now use explicit internal fault injection and wait for the computed style. The complete rerun passed. These checks do not establish API-key inference, other operating systems, provider throughput at the limits, or every possible process-crash timing.
+
 ## Follow-up conversations
 
 Validated on 2026-10-24. The selected agent can receive a message after completion, cancellation, failure, pause, or at a human review checkpoint, provided its provider session is idle. The runner uses the saved agent permissions, skills, model, and provider session. It reserves task capacity and the working folder before accepting the message. Replies do not approve a plan or start later workflow steps. File changes mark earlier output versions as stale.

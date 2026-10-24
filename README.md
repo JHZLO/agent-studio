@@ -45,6 +45,34 @@ Instructions use the agent's frozen permissions and skills. They cannot bypass a
 
 Pending instructions survive a page reload. If the runner restarts or cannot confirm a stop, Studio holds the task for inspection and does not replay commands. Inspect the provider and project before cancelling that interrupted task and starting a new conversation.
 
+## Parallel child agents
+
+Open **Agent library > Edit agent > Parallel delegation**. Enable child agents, choose their saved presets, and set a concurrency limit from 1 to 3. Existing presets keep delegation disabled. Changes apply to new tasks; a running task retains its frozen instructions, models, skills, and permissions.
+
+The parent agent decides which independent work to delegate. It can use its own preset or the other presets you allow. Each child gets a separate conversation and a bounded objective. A child cannot create more children. Each parent step can create up to 12 children in total, with no more than the configured number active at once. The runner permits at most 24 active children across tasks. Provider quotas and machine resources remain shared.
+
+```mermaid
+flowchart LR
+    P[Parent agent] --> A[Child: implementation]
+    P --> B[Child: review]
+    P --> C[Child: test]
+    A --> J[Parent inspects and collects results]
+    B --> J
+    C --> J
+    J --> V[Verify combined changes]
+    V --> H[Existing workflow handoff or human review]
+```
+
+Children work from isolated snapshots of the parent's current files, including uncommitted changes. For a Git project, select its repository root and create at least one commit first. Action-capable children run in separate Git worktrees. Read-only children can also use a bounded copy of a non-Git project. Secret paths and generated directories are excluded from snapshots; non-Git copies also exclude hidden entries and symlinks.
+
+Child tools are limited to those enabled for both the parent and the selected child preset. Child permissions cannot exceed the parent and never inherit **Bypass permissions**. Read-only delegation blocks writes and action tools. Studio records child approvals, tool receipts, findings, and artifacts separately.
+
+The parent must inspect and accept or discard every child result before handing off. Accepting a successful result copies its evidence and applies any changed files only if those files still match the child's starting snapshot. Conflicts stop collection instead of overwriting parent edits. After integrating code, the parent must record a successful execution check against the combined files. Child worktrees remain available for inspection; they are not automatically deleted.
+
+Open a child under its parent in the task's session list or agent map. Conversation, elapsed time, tool evidence, artifacts, and fullscreen source previews belong to that selected child. **Add to queue** and **Adjust current work** target the selected active session. Interrupting the parent stops its children before applying the new instruction; interrupting a child leaves its siblings running. Task cancellation stops the whole group. Completed child sessions remain readable; ask the parent to review them or delegate another task for further work.
+
+An interrupted runner does not automatically replay child work or repeat an uncertain integration. Inspect the saved sessions and files before starting a replacement task. Human plan locks and workflow reviews still apply.
+
 ## Concurrent tasks
 
 Choose **Defaults > Concurrent tasks** to set a workspace limit from 1 to 8. Existing workspaces start at 1. The home screen shows the active count, and **Tasks** lets you open and control each task independently. Approvals, reviews, cancellation, provider sessions, and terminal control belong to the selected task.
