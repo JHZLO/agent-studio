@@ -11,7 +11,7 @@ import { Store, hash } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
 import { folders, inspectProject, prepareProject, projectInstructions, git, contained } from "./projects.ts";
 import { Connections } from "./connections.ts";
-import { CodexHost, RpcError, accountFingerprint, claudeBinary, runtimeEnvironment, supportsFastMode, type Wire } from "./codex.ts";
+import { CodexHost, RpcError, accountFingerprint, claudeBinary, runtimeLoader, runtimeEnvironment, supportsFastMode, type Wire } from "./codex.ts";
 import { Toolbox, toolSpecs, enabledTools, codeReference, type Receipt } from "./tools.ts";
 import { openTerminal, terminalCall } from "./terminals.ts";
 import { LocalHistory } from "./local-history.ts";
@@ -487,7 +487,7 @@ export class Studio {
   private async claudeTurn(run: Run, step: Step, prompt: string, toolbox: Toolbox): Promise<string> {
     const capability = randomUUID();
     this.mcpCapabilities.set(step.id, { capability, runId: run.id });
-    const mcp = { mcpServers: { studio: { command: process.execPath, args: ["--import", "tsx", join(import.meta.dirname, "../../apps/runner/mcp.ts")], env: { AGENT_STUDIO_DATA_DIR: this.dataDir, AGENT_STUDIO_STEP_ID: step.id, AGENT_STUDIO_CAPABILITY: capability } } } };
+    const mcp = { mcpServers: { studio: { command: process.execPath, args: ["--import", runtimeLoader, join(import.meta.dirname, "../../apps/runner/mcp.ts")], env: { AGENT_STUDIO_DATA_DIR: this.dataDir, AGENT_STUDIO_STEP_ID: step.id, AGENT_STUDIO_CAPABILITY: capability } } } };
     const mcpPath = join(this.dataDir, "runs", run.id, `mcp-${step.id}.json`);
     await mkdir(join(mcpPath, ".."), { recursive: true, mode: 0o700 });
     await writeFile(mcpPath, JSON.stringify(mcp), { mode: 0o600 });
@@ -498,7 +498,7 @@ export class Studio {
     if (this.closing || ["cancelled", "cancelling"].includes(run.status)) { this.mcpCapabilities.delete(step.id); await unlink(mcpPath).catch(() => {}); throw new Error("The run stopped before its session was ready."); }
     const child = spawn(claudeBinary, args, { cwd: run.cwd, env, stdio: ["pipe", "pipe", "pipe"] }); this.claudeProcesses.set(run.id, child);
     this.save(run, "session.started", { stepId: step.id, providerThreadId: step.providerThreadId });
-    let buffer = "", errorText = "", result = "";
+    let buffer = "", errorText = "", result = "", bridgeReady = false;
     const timer = setTimeout(() => child.kill("SIGTERM"), 600000);
     child.stdin.end(prompt);
     child.stderr.on("data", chunk => { errorText = this.connections.redact((errorText + chunk).slice(-4000)); });
@@ -509,10 +509,15 @@ export class Studio {
         const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
         try {
           const event = JSON.parse(line);
-          if (event.type === "system" && event.subtype === "init") { step.actualModel = event.model; this.save(run, "session.initialized", { stepId: step.id }); }
+          if (event.type === "system" && event.subtype === "init") {
+            bridgeReady = event.mcp_servers?.some((server: Wire) => server.name === "studio" && server.status === "connected") ?? false;
+            if (!bridgeReady) { errorText = "Claude's Studio tool connection failed. No handoff was accepted. Check the local runtime and start a new task."; child.kill("SIGTERM"); }
+            step.actualModel = event.model; this.save(run, "session.initialized", { stepId: step.id, toolsConnected: bridgeReady });
+          }
           if (event.type === "assistant") for (const block of event.message?.content ?? []) if (block.type === "text") this.message(run, step, "assistant", block.text);
           if (event.type === "result") {
-            if (event.is_error) errorText = event.result || "Claude Code reported a failed turn.";
+            if (!bridgeReady) errorText = "Claude's Studio tool connection was not established. No handoff was accepted.";
+            else if (event.is_error) errorText = event.result || "Claude Code reported a failed turn.";
             else result = event.structured_output ? JSON.stringify(event.structured_output) : event.result;
             step.usage = event.usage; this.save(run, "turn.completed", { stepId: step.id });
           }
