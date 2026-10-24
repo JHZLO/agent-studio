@@ -535,6 +535,7 @@ export class Studio {
   }
   private async mergeSession(run: Run, target: Step, source: Step, request: string, readOnly: boolean) {
     const step: Step = { id: randomUUID(), agent: { ...source.agent, delegation: undefined }, workspace: target.workspace, purpose: "merge", status: "running", sessionId: randomUUID(), messages: [], receivedArtifacts: [], feedback: request };
+    step.receivedArtifacts = this.inputArtifacts(run, step).map(artifact => ({ id: artifact.id, name: artifact.name }));
     run.merge!.sessions.push(step); this.message(run, step, "system", readOnly ? "Reviewing the combined branches. A pass requires checking the actual merged files." : "Resolving branch disagreements in the isolated merge workspace.");
     const toolbox = new Toolbox({ run, step, save: (kind, detail) => this.save(run, kind, { ...(detail as object), stepId: step.id }), approval: (kind, text, details) => this.awaitApproval(run, step, kind, text, details), redact: text => this.connections.redact(text) }, join(this.dataDir, "runs", run.id, "artifacts"));
     this.tools.set(step.id, toolbox);
@@ -548,6 +549,7 @@ export class Studio {
       step.finalText = text; step.decision = result.decision; step.codeReference = await this.reference(run, step); step.status = "succeeded"; step.completedAt = now();
       if (!step.messages.some(message => message.type === "assistant" && message.text === text)) this.message(run, step, "assistant", text);
       run.artifacts.push({ id: randomUUID(), name: `merge-${step.id.slice(0, 8)}.md`, type: "Merge discussion", content: result.summary, agent: step.agent.name, stepId: step.id, codeReference: step.codeReference });
+      run.artifacts.push({ id: randomUUID(), name: `merge-${step.id.slice(0, 8)}-evidence.json`, type: "Tool evidence", content: JSON.stringify(toolbox.receipts, null, 2), agent: step.agent.name, stepId: target.id, codeReference: step.codeReference, verified: true });
       this.save(run, "merge.agent_completed", { stepId: step.id, decision: result.decision, receiptIds: toolbox.receipts.map(receipt => receipt.id) });
       return result;
     } catch (error) { step.status = "failed"; this.save(run, "merge.agent_failed", { stepId: step.id }); throw error; }

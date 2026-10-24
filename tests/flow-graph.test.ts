@@ -59,6 +59,8 @@ test("Fan-out runs independent readers concurrently and the join waits for both"
   coder.resolve(); await until(() => f.store.run(run.id)!.steps[1].status === "succeeded");
   assert.equal(f.calls.length, 3); reviewer.resolve();
   const done = await f.wait(run.id, "succeeded"); assert(done.steps[3].receivedArtifacts.some(item => item.name === "reviewer.md")); assert(done.steps[3].receivedArtifacts.some(item => item.name === "coder.md")); assert.equal(done.merge?.status, "agreed");
+  assert(done.merge!.sessions.every(session => session.receivedArtifacts.length > 0));
+  assert(done.steps[3].receivedArtifacts.some(artifact => /merge-.+-evidence.json/.test(artifact.name)));
   assert.equal(done.steps[1].receivedArtifacts.length, 2); assert.equal(done.steps[2].receivedArtifacts.length, 2);
   const rightPrompt = f.calls.find(call => call.id === "reviewer")!.prompt;
   assert(!rightPrompt.includes("coder.md")); assert(f.calls[3].prompt.includes("coder.md")); assert(f.calls[3].prompt.includes("reviewer.md"));
