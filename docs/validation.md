@@ -40,6 +40,18 @@ The k6 tool was executed separately against a local HTTP fixture. Its excessive-
 
 The recovery fault tests do not claim exhaustive process-crash coverage. Interrupted Claude turns and uncertain terminal ownership stop for inspection instead of automatic replay.
 
+## Follow-up conversations
+
+Validated on 2026-10-24. The selected agent can receive a message after completion, cancellation, failure, pause, or at a human review checkpoint, provided its provider session is idle. The runner uses the saved agent permissions, skills, model, and provider session. It reserves task capacity and the working folder before accepting the message. Replies do not approve a plan or start later workflow steps. File changes mark earlier output versions as stale.
+
+- Real Codex subscription: completed a sample task, closed its app-server, resumed the same provider thread, answered about the earlier file, and read a second file using a Studio tool.
+- Real Claude subscription: completed a sample task through the Studio MCP bridge, resumed the saved CLI session, answered about the earlier file, and used the bridge again to read a second file.
+- Both probes retained the provider session ID and workflow position. They used separate temporary projects and did not send messages to existing user tasks.
+- Automated coverage checks pending plan reviews, frozen permissions, write evidence, concurrent sends, overlapping folders, reply cancellation, exact-turn recovery, and mismatched provider sessions.
+- Browser coverage checks separate agent drafts, newline and send shortcuts, streaming updates, failed sends, reply stopping, safe summary rendering, fullscreen documents, and mobile layout.
+
+The isolated committed source passed type checking, production build, and all 117 tests. Two viewport assertions now wait for the responsive render before measuring bounds. The actual local UI was also inspected with a completed Tester conversation and its report side by side. API-key inference and exhaustive crash recovery were not run for this change.
+
 ## UI acceptance coverage
 
 The original cream background, ink borders, six role colors, typography, characters, responsive rules, and reduced-motion handling are retained. Product additions use the existing session and output panels.
