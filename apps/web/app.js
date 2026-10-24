@@ -8,6 +8,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
 import { sessionTiming, formatDuration } from "./session-time.js";
 import { isMarkdown, renderMarkdown, renderDiagrams } from "./markdown.js";
 import "./markdown.css";
+import "./session-focus.css";
 (() => {
   "use strict";
 
@@ -27,6 +28,7 @@ import "./markdown.css";
 
   const ui = {
     view: "home", selected: null, artifactId: null, pendingOrder: null,
+    expandedRunId: null, openArtifacts: [], artifactFormat: "preview", focusPane: "conversation", focusSplit: 44, focusScroll: 0,
     sessionTab: "conversation", reviewDraft: "", reviewId: null, step: 0, followRun: true, historyId: null,
     linkFrom: null, zoom: null, connectProvider: "codex", connectAuth: "subscription",
     skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", editingAgentId: null, starting: false,
@@ -266,11 +268,13 @@ import "./markdown.css";
   let sessionClockTimer;
 
   function render(live = false) {
+    if (ui.view !== "run" || currentRun()?.id !== ui.expandedRunId) ui.expandedRunId = null;
+    document.body.classList.toggle("session-expanded", !!ui.expandedRunId);
     closeSelects(app);
     const retainedTerminal = ui.view === "run" && ui.sessionTab === "terminal" ? retainTerminal() : null;
     const focused = document.activeElement;
-    const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
-    const preserved = live ? [document.getElementById("task-brief"), document.getElementById("flow-rule-form")] : [];
+    const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "data-pane", "data-format", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
+    const preserved = live ? [document.getElementById("task-brief"), document.getElementById("flow-rule-form"), document.getElementById("review-feedback"), document.getElementById("focus-document")] : [];
     const scrollPositions = live ? [...document.querySelectorAll(".session-content, .evidence-body, .run-steps, .canvas-viewport, .sidebar, .nav")].map(element => [element.className, element.scrollTop, element.scrollLeft]) : [];
     const viewNames = { home: "New task", team: "Flows", run: "Task details", agents: "Agent library", skills: "Skill library", connections: "AI connections", runs: "Tasks", imported: "Imported sessions", defaults: "Workspace defaults" };
     const entering = renderedView !== ui.view;
@@ -628,6 +632,7 @@ import "./markdown.css";
     if (!run) return emptyState("message", "Watch your team work", "Start a task. Each agent opens a fresh session, completes a step, and hands its outputs to the next agent.", button("run", "Run task", "play", "primary"));
     ui.step = Math.min(Math.max(ui.step, 0), run.steps.length - 1);
     const step = run.steps[ui.step];
+    const expanded = ui.expandedRunId === run.id;
     const isCurrent = engine.isActive(run) || run.id === state.run?.id;
     const controls = isCurrent ? (run.status === "running" ? button("pause", run.pauseRequested ? "Pause requested" : "Pause", "pause", "", "", run.pauseRequested) : run.status === "paused" && run.controlMode === "studio" ? button("resume", "Resume", "play", "primary") : "") + (["queued", "running", "paused", "waiting_approval", "waiting_review", "needs_reconciliation", "cancelling"].includes(run.status) ? button("cancel", "Cancel", "stop", "danger") : button("run", "Run again", "play", "primary")) : button("live-session", "Latest run", "arrow");
     const activeStep = run.steps[Math.min(run.index, run.steps.length - 1)];
@@ -640,7 +645,7 @@ import "./markdown.css";
     const actionMark = ["running", "waiting_approval", "paused"].includes(run.status) ? agentIcon(activeStep.agent, true, mood(activeStep)) : icon(run.status === "succeeded" ? "check" : run.status === "failed" ? "alert" : "activity");
     return html`<section class="next-action ${["waiting_approval", "waiting_review"].includes(run.status) ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${t(nextAction)}</h2><p>${detail}</p>${run.approval ? html`<pre class="approval-details">${escape(run.approval.details)}</pre>` : ""}</div><div class="actions">${approvalActions}</div></section>
       <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Flow v${run.flow.revision || 1}${run.lockedPlan ? t` / Approved plan v${run.lockedPlan.version}` : ""}${Object.entries(run.loopCounts || {}).map(([id, count]) => t` / ${escape(run.steps.find(s => s.agent.id === id)?.agent.name)} revisions ${count}/${run.flow.rules?.find(r => r.after === id)?.loop?.maxCycles}`).join("")}</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => html`<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
-      <section class="panel run-grid"><aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, run)}${followControl}</div></div><nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, run) : ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div><div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${evidenceView(run)}</section>`;
+      <section class="panel run-grid${expanded ? " expanded-workspace" : ""}"${expanded ? ` style="--session-split:${ui.focusSplit}%" data-pane="${ui.focusPane}"` : ""}>${expanded ? focusHeader(run) : ""}<aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, run)}${followControl}${expanded ? "" : button("session-fullscreen", "Full screen", "fit", "small")}</div></div><nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, run) : ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div>${expanded && run.review?.stepId === step.id && run.status === "waiting_review" && ["conversation", "review"].includes(ui.sessionTab) ? html`<div class="focus-review">${reviewControls(run, run.review)}</div>` : ""}<div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${expanded ? html`<div class="session-divider" role="separator" aria-label="Resize conversation and document panels" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65" aria-valuenow="${ui.focusSplit}" tabindex="0"></div>` : ""}${evidenceView(run)}</section>`;
   }
 
   function sessionClock(step, run, compact = false) {
@@ -668,6 +673,16 @@ import "./markdown.css";
     return [["Input", input], ["Cached", cached], ["Output", output]].filter(([, value]) => Number.isFinite(value)).map(([label, value]) => `${t(label)}: ${value.toLocaleString(locale())}`).join(" / ") || t("Token usage not reported.");
   }
 
+  function reviewControls(run, review) {
+    if (ui.reviewId !== review.id) { ui.reviewId = review.id; ui.reviewDraft = ""; }
+    const step = [...run.steps, ...(run.stepHistory || [])].find(s => s.id === review.stepId);
+    const pending = engine.isActive(run) && run.status === "waiting_review" && !!run.review;
+    const canApprove = pending && !["scope_change", "loop_limit"].includes(review.kind);
+    const target = run.steps.find(s => s.agent.id === review.returnTo);
+    const planning = step?.agent.role === "planner" && review.lockOutputs;
+    return pending ? html`<form data-form="review-feedback" data-id="${review.id}" class="review-feedback"><label for="review-feedback">${planning ? t("Questions or changes for the plan") : t`What should ${escape(target?.agent.name || t("the agent"))} change?`}</label><textarea id="review-feedback" data-id="${review.id}" name="feedback" maxlength="8000" rows="3" placeholder="Describe the changes or the next approach to try..." required>${escape(ui.reviewDraft)}</textarea><p class="meta">A revision returns to ${escape(target?.agent.name)} and reruns later checks. Previous sessions remain in Attempts.</p><button type="submit" class="btn">${icon("reset")}Request revision</button></form><div class="review-actions">${canApprove ? button("review-lock", review.lockOutputs ? "Lock only" : "Approve only", "lock") + button("review-approve", review.lockOutputs ? "Lock and continue" : "Approve and continue", "check", "primary") : html`<p class="meta">Send a revision request to continue, or cancel this task. No further automatic retries will run without your action.</p>`}</div><p class="meta">${review.lockOutputs ? t("Approval locks these exact output versions. ") : ""}Human review does not grant tool permissions.</p>` : html`<p class="meta">${review.action === "approved" ? t`Approved ${new Date(review.resolvedAt).toLocaleString(locale())}.` : escape(review.feedback || "")}</p>`;
+  }
+
   function reviewView(run) {
     const review = run.review || run.reviewHistory?.at(-1);
     if (!review) return html`<p>No human review is pending.</p>`;
@@ -675,16 +690,15 @@ import "./markdown.css";
     const step = [...run.steps, ...(run.stepHistory || [])].find(s => s.id === review.stepId);
     const previous = (run.stepHistory || []).filter(s => s.agent.id === step?.agent.id).at(-1);
     const pending = engine.isActive(run) && run.status === "waiting_review" && !!run.review;
-    const canApprove = pending && !["scope_change", "loop_limit"].includes(review.kind);
     const outputs = review.artifactIds.map(id => run.artifacts.find(a => a.id === id)).filter(Boolean);
-    const target = run.steps.find(s => s.agent.id === review.returnTo);
     const planning = step?.agent.role === "planner" && review.lockOutputs;
     return html`<div class="review-workspace"><div class="review-heading"><h3>${review.kind === "scope_change" ? t("Review the requested scope change") : review.kind === "loop_limit" ? t("Choose the next revision") : planning ? t("Review the plan together") : t("Review this handoff")}</h3><span class="badge ${pending ? "amber" : "gray"}">${pending ? t`Draft ${step?.attempt || 1}` : review.action === "approved" ? t("Approved") : t("Revision requested")}</span></div><div class="review-summary">${renderMarkdown(review.summary)}</div>${pending && planning ? html`<p class="guide-note">Ask questions or request changes below. Planner will return a new draft. Coder stays queued until you lock the plan and continue.</p>` : ""}
       ${outputs.map(artifact => {
+        if (ui.expandedRunId) return artifactRow(artifact);
         const before = previous && run.artifacts.find(a => a.stepId === previous.id && a.name === artifact.name);
         return html`<article class="review-document"><div class="review-document-heading"><h3>${icon("file")}${escape(artifact.name)}</h3>${isMarkdown(artifact) ? button("open-document", "Read in full", "fit", "small", `data-id="${escape(artifact.id)}"`) : ""}</div><div class="review-document-body">${artifactPreview(artifact)}</div>${before && before.id !== artifact.id ? html`<details class="review-compare"><summary>Compare with previous draft</summary><div class="review-diff"><section><h4>Previous draft</h4><pre>${escape(before.content)}</pre></section><section><h4>Current draft</h4><pre>${escape(artifact.content)}</pre></section></div></details>` : ""}</article>`;
       }).join("") || html`<p class="meta">This step returned no text artifacts. Inspect Conversation and Tool activity before deciding.</p>`}
-      ${pending ? html`<form data-form="review-feedback" data-id="${review.id}" class="review-feedback"><label for="review-feedback">${planning ? t("Questions or changes for the plan") : t`What should ${escape(target?.agent.name || t("the agent"))} change?`}</label><textarea id="review-feedback" name="feedback" maxlength="8000" rows="3" placeholder="Describe the changes or the next approach to try..." required>${escape(ui.reviewDraft)}</textarea><p class="meta">A revision returns to ${escape(target?.agent.name)} and reruns later checks. Previous sessions remain in Attempts.</p><button type="submit" class="btn">${icon("reset")}Request revision</button></form><div class="review-actions">${canApprove ? button("review-lock", review.lockOutputs ? "Lock only" : "Approve only", "lock") + button("review-approve", review.lockOutputs ? "Lock and continue" : "Approve and continue", "check", "primary") : html`<p class="meta">Send a revision request to continue, or cancel this task. No further automatic retries will run without your action.</p>`}</div><p class="meta">${review.lockOutputs ? t("Approval locks these exact output versions. ") : ""}Human review does not grant tool permissions.</p>` : html`<p class="meta">${review.action === "approved" ? t`Approved ${new Date(review.resolvedAt).toLocaleString(locale())}.` : escape(review.feedback || "")}</p>`}
+      ${ui.expandedRunId ? "" : reviewControls(run, review)}
       ${run.reviewHistory?.length ? html`<details class="review-history"><summary>Review history (${run.reviewHistory.length})</summary>${run.reviewHistory.map(item => html`<div><strong>${item.action === "approved" ? t("Approved") : t("Revision requested")}</strong><p>${escape(item.feedback || item.summary)}</p><small>${new Date(item.resolvedAt).toLocaleString(locale())}</small></div>`).join("")}</details>` : ""}</div>`;
   }
 
@@ -718,7 +732,95 @@ import "./markdown.css";
     return html`<button class="artifact-row" data-action="artifact" data-id="${escape(artifact.id)}" data-tint="${tintOf(artifact.type)}">${icon(artifact.type === "Code diff" ? "code" : "file")}<span><strong>${escape(artifact.name)}</strong><small>${escape(artifact.agent)} / ${artifact.superseded ? t("Previous attempt") : artifact.stale ? t("Earlier code version") : currentRun()?.reviewHistory?.some(review => review.action === "approved" && review.lockOutputs && review.artifactIds.includes(artifact.id)) ? t("Locked output") : artifact.verified ? t("Recorded evidence") : t("Agent report")}</small></span><span class="badge gray">${escape(t(artifact.type))}</span>${icon("chevron")}</button>`;
   }
 
+  function toggleSessionFullscreen() {
+    const run = currentRun();
+    if (!run) return;
+    if (ui.expandedRunId) {
+      ui.expandedRunId = null;
+      if (ui.sessionTab === "conversation" && ui.focusReturnTab === "review") ui.sessionTab = "review";
+      render(true);
+      window.scrollTo(0, ui.focusScroll);
+      app.querySelector('[data-action="session-fullscreen"]')?.focus({ preventScroll: true });
+      return;
+    }
+    ui.expandedRunId = run.id; ui.focusScroll = window.scrollY;
+    ui.focusReturnTab = ui.sessionTab;
+    if (ui.sessionTab === "review") ui.sessionTab = "conversation";
+    ui.focusPane = "conversation";
+    ui.openArtifacts = ui.openArtifacts.filter(id => run.artifacts.some(a => a.id === id));
+    const artifact = run.artifacts.find(a => a.id === ui.artifactId) || run.artifacts.find(a => a.id === run.review?.artifactIds[0]) || run.artifacts.find(a => a.stepId === run.steps[ui.step]?.id && !a.superseded && !a.stale) || run.artifacts.find(a => !a.superseded && !a.stale);
+    ui.artifactId = artifact?.id || null;
+    if (artifact && !ui.openArtifacts.includes(artifact.id)) ui.openArtifacts.push(artifact.id);
+    render(true);
+    app.querySelector('.focus-header [data-action="session-fullscreen"]')?.focus({ preventScroll: true });
+  }
+
+  function focusHeader(run) {
+    return html`<header class="focus-header"><div class="focus-task">${icon("folder")}<strong title="${escape(run.brief)}">${escape(run.brief)}</strong>${statusBadge(run.status)}</div><div class="focus-mobile-switch" role="group" aria-label="Visible panel">${[["conversation", "Conversation"], ["document", "Documents"]].map(([pane, label]) => button("focus-pane", label, "", "small", `data-pane="${pane}" aria-pressed="${ui.focusPane === pane}"`)).join("")}</div>${button("session-fullscreen", "Exit full screen", "close", "small")}</header>`;
+  }
+
+  function openArtifact(id) {
+    if (!findArtifact(id)) return;
+    ui.artifactId = id;
+    if (ui.expandedRunId) {
+      if (!ui.openArtifacts.includes(id)) ui.openArtifacts.push(id);
+      ui.focusPane = "document";
+    }
+    render(true);
+    app.querySelector(".evidence-body")?.scrollTo(0, 0);
+  }
+
+  function focusedEvidenceView(run) {
+    const artifact = run.artifacts.find(a => a.id === ui.artifactId);
+    const tabs = ui.openArtifacts.map(id => run.artifacts.find(a => a.id === id)).filter(Boolean);
+    const markdown = artifact && isMarkdown(artifact);
+    return html`<aside class="evidence-panel focused-evidence" aria-label="Task outputs"><div class="focus-files-bar">${button("all-outputs", "Outputs", "folder", "small focus-output-list", `aria-pressed="${!artifact}"`)}<div class="focus-files" role="tablist" aria-label="Open documents">${tabs.map(item => html`<div class="focus-file${item.id === artifact?.id ? " active" : ""}"><button class="focus-file-tab" role="tab" id="file-tab-${escape(item.id)}" aria-controls="focus-document" aria-selected="${item.id === artifact?.id}" tabindex="${item.id === artifact?.id || (!artifact && item === tabs[0]) ? 0 : -1}" data-action="artifact" data-id="${escape(item.id)}" title="${escape(item.name)}">${icon(item.type === "Code diff" ? "code" : "file")}${escape(item.name)}</button>${button("close-artifact", "", "close", "text icon-only", attrs`data-id="${escape(item.id)}" aria-label="Close ${escape(item.name)}"`)}</div>`).join("")}</div></div>${artifact ? html`<div class="focus-document-toolbar"><div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${artifact.superseded ? t("Previous attempt") : escape(t(artifact.type))}</p></div><div class="focus-document-actions">${markdown ? html`<div class="segment" role="group" aria-label="Document format">${[["preview", "Preview"], ["source", "Markdown source"]].map(([format, label]) => html`<button data-action="focus-format" data-format="${format}" class="${ui.artifactFormat === format ? "active" : ""}" aria-pressed="${ui.artifactFormat === format}">${t(label)}</button>`).join("")}</div>` : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div></div><div id="focus-document" class="evidence-body focus-document-content" data-id="${escape(run.id)}:${escape(artifact.id)}:${ui.artifactFormat}" role="tabpanel" aria-labelledby="file-tab-${escape(artifact.id)}" tabindex="0">${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : markdown && ui.artifactFormat !== "source" ? artifactPreview(artifact) : sourcePreview(artifact)}</div>` : html`<div class="evidence-body"><h3>Outputs</h3><p class="meta">Choose a document to read alongside the conversation.</p>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output">${icon("file")}<span>Waiting for the first output<small>Outputs appear here when an agent produces them.</small></span></div>`}</div>`}</aside>`;
+  }
+
+  function sourcePreview(artifact) {
+    const diff = artifact.type === "Code diff" || /\.diff$/i.test(artifact.name);
+    let oldLine = null, newLine = null;
+    return html`<div class="source-view${diff ? " source-diff" : ""}" aria-label="${diff ? t("Code changes") : t("Source code")}">${artifact.content.split("\n").map((line, index) => {
+      const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      let left = "", right = "", kind = "";
+      if (!diff) right = index + 1;
+      else if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); kind = "source-hunk"; }
+      else if (/^(diff |index |--- |\+\+\+ )/.test(line)) { oldLine = newLine = null; kind = "source-file"; }
+      else if (oldLine !== null && newLine !== null) {
+        if (line.startsWith("+")) { right = newLine++; kind = "diff-add"; }
+        else if (line.startsWith("-")) { left = oldLine++; kind = "diff-remove"; }
+        else if (line.startsWith(" ")) { left = oldLine++; right = newLine++; }
+      }
+      return html`<div class="source-line ${kind}">${diff ? html`<span class="source-number" aria-hidden="true">${left}</span>` : ""}<span class="source-number" aria-hidden="true">${right}</span><code>${escape(line) || " "}</code></div>`;
+    }).join("")}</div>`;
+  }
+
+  function setFocusSplit(value) {
+    ui.focusSplit = Math.max(30, Math.min(65, Math.round(value)));
+    app.querySelector(".expanded-workspace")?.style.setProperty("--session-split", `${ui.focusSplit}%`);
+    app.querySelector(".session-divider")?.setAttribute("aria-valuenow", String(ui.focusSplit));
+  }
+
+  document.addEventListener("pointerdown", event => {
+    const divider = event.target.closest(".session-divider");
+    if (!divider || event.button !== 0) return;
+    event.preventDefault(); divider.focus();
+    const bounds = divider.parentElement.getBoundingClientRect();
+    const move = event => setFocusSplit((event.clientX - bounds.left) / bounds.width * 100);
+    const finish = () => {
+      document.body.classList.remove("resizing-session");
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", finish);
+    };
+    document.body.classList.add("resizing-session");
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+  });
+
   function evidenceView(run) {
+    if (ui.expandedRunId === run.id) return focusedEvidenceView(run);
     const artifact = run.artifacts.find(item => item.id === ui.artifactId);
     return html`<aside class="evidence-panel" aria-label="Task outputs"><div class="panel-heading"><h2>${icon("file")}Outputs <span class="badge gray">${run.artifacts.length}</span></h2></div><div class="evidence-body">${artifact ? html`<div class="evidence-navigation">${button("all-outputs", "All outputs", "arrow", "text small back-button")}${isMarkdown(artifact) ? button("open-document", "Read in full", "fit", "text small", `data-id="${escape(artifact.id)}"`) : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${escape(t(artifact.type))}</p>${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : ""}${artifactPreview(artifact)}` : html`<div class="evidence-intro"><h3>See the work behind the status.</h3><p>Plans, changes, and QA evidence appear here as each agent finishes.</p></div>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output">${icon("file")}<span>${["running", "queued"].includes(run.status) ? t("Waiting for the first output") : t("No outputs recorded")}<small>Outputs appear here when an agent produces them.</small></span></div>`}`}</div></aside>`;
   }
@@ -731,6 +833,7 @@ import "./markdown.css";
   function openDocument(id) {
     const artifact = findArtifact(id);
     if (!artifact || !isMarkdown(artifact)) return;
+    if (ui.expandedRunId) { openArtifact(id); return; }
     showModal(escape(artifact.name), html`<div class="document-toolbar"><div class="segment" role="group" aria-label="Document format"><button class="active" data-action="document-format" data-format="preview" aria-pressed="true">Preview</button><button data-action="document-format" data-format="source" aria-pressed="false">Markdown source</button></div><p class="meta">${escape(artifact.agent)} / ${escape(t(artifact.type))}</p></div><div class="document-content"><div class="document-preview">${renderMarkdown(artifact.content)}</div><pre class="document-source" hidden>${escape(artifact.content)}</pre></div>`, button("download-artifact", "Download", "download", "", `data-id="${escape(artifact.id)}"`) + button("close-modal", "Close", "", "primary"), true, "Document reader");
     modal.classList.add("document-reader");
   }
@@ -1066,7 +1169,16 @@ import "./markdown.css";
     else if (action === "configure-agent") editAgent(id);
     else if (action === "select-agent") { ui.selected = id; render(); if (matchMedia("(max-width: 880px)").matches) document.querySelector(".inspector")?.scrollIntoView({ block: "nearest" }); }
     else if (action === "close-inspector") { ui.selected = null; render(); }
-    else if (action === "all-outputs") { ui.artifactId = null; render(); }
+    else if (action === "all-outputs") { ui.artifactId = null; ui.focusPane = "document"; render(true); }
+    else if (action === "session-fullscreen") toggleSessionFullscreen();
+    else if (action === "focus-pane") { ui.focusPane = target.dataset.pane; render(true); }
+    else if (action === "focus-format") { ui.artifactFormat = target.dataset.format; render(true); app.querySelector(".focus-document-content")?.scrollTo(0, 0); }
+    else if (action === "close-artifact") {
+      const index = ui.openArtifacts.indexOf(id);
+      ui.openArtifacts = ui.openArtifacts.filter(value => value !== id);
+      if (ui.artifactId === id) ui.artifactId = ui.openArtifacts[Math.min(index, ui.openArtifacts.length - 1)] || null;
+      render(true); app.querySelector(".focus-file-tab[aria-selected=true], .focus-output-list")?.focus({ preventScroll: true });
+    }
     else if (action === "follow-run") { ui.followRun = true; ui.step = Math.min(currentRun().index, currentRun().steps.length - 1); render(); }
     else if (action === "help") { if (ui.navigationOpen) closeNavigation(); helpModal(); }
     else if (action === "close-modal") closeModal();
@@ -1268,7 +1380,7 @@ import "./markdown.css";
     }
     else if (action === "artifact") {
       const artifact = findArtifact(id);
-      if (artifact) { ui.artifactId = id; render(); }
+      if (artifact) openArtifact(id);
     }
     else if (action === "open-document") openDocument(id);
     else if (action === "document-format") {
@@ -1396,7 +1508,23 @@ import "./markdown.css";
     if (event.target.id === "picker-search") { ui.pickerQuery = event.target.value; document.getElementById("picker-rows").innerHTML = skillRows(ui.pickerQuery, true); }
   });
   document.addEventListener("keydown", event => {
-    if (modal.open) return;
+    if (modal.open || event.defaultPrevented) return;
+    if (ui.expandedRunId && event.key === "Escape" && !document.querySelector(":popover-open") && !event.target.closest("#studio-terminal")) {
+      event.preventDefault(); toggleSessionFullscreen(); return;
+    }
+    if (event.target.matches(".session-divider") && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      setFocusSplit(event.key === "Home" ? 30 : event.key === "End" ? 65 : ui.focusSplit + (event.key === "ArrowLeft" ? -2 : 2));
+      return;
+    }
+    if (event.target.matches(".focus-file-tab") && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      const tabs = [...app.querySelectorAll(".focus-file-tab")], index = tabs.indexOf(event.target);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowLeft" ? -1 : 1) + tabs.length) % tabs.length;
+      const id = tabs[next].dataset.id; openArtifact(id);
+      app.querySelector(`.focus-file-tab[data-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+      return;
+    }
     if (event.key === "Escape" && ui.navigationActions) {
       closeNavigationActions(); app.querySelector('[data-action="navigation-actions"]').focus(); return;
     }
