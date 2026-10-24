@@ -33,7 +33,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     view: "home", selected: null, artifactId: null, pendingOrder: null,
     expandedRunId: null, openArtifacts: [], artifactFormat: "preview", focusPane: "conversation", focusSplit: 44, focusScroll: 0,
     sourceDocuments: [], fileBrowser: null, fileBrowserActive: false, fileLoading: false, fileError: "", fileRequest: 0,
-    runLayout: "details", sessionTab: "conversation", reviewDraft: "", reviewId: null, messageDrafts: {}, sendingMessages: new Set(), step: 0, followRun: true, historyId: null,
+    runLayout: "details", sessionTab: "conversation", reviewDraft: "", reviewId: null, messageDrafts: {}, messageModes: {}, sendingMessages: new Set(), step: 0, followRun: true, historyId: null,
     linkFrom: null, zoom: null, connectProvider: "codex", connectAuth: "subscription",
     skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", editingAgentId: null, starting: false,
     navigationOpen: false, navigationActions: false, expandedProjects: new Set([state.activeProjectId].filter(Boolean)),
@@ -737,9 +737,14 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   function messageComposer(run, step) {
     const key = `${run.id}:${step.id}`, sending = ui.sendingMessages.has(key);
     const replying = run.followup?.stepId === step.id;
-    const allowed = step.providerThreadId && step.status !== "queued" && ["succeeded", "failed", "cancelled", "paused", "waiting_review"].includes(run.status) && run.controlMode === "studio" && !run.approval && !run.followup && !run.steps.some(item => item.activeTurnId);
-    const hint = !step.providerThreadId || step.status === "queued" ? "This agent can receive messages after its session starts." : run.status === "needs_reconciliation" ? "Check provider state before continuing this conversation." : !allowed && !replying ? "Wait for the current turn to finish or pause the workflow to send a message." : "Uses this agent's saved permissions. Other agents will not run automatically.";
-    return html`<form class="session-composer" data-form="session-message" data-id="${key}"><label for="session-message">Message ${escape(step.agent.name)}</label><textarea id="session-message" data-id="${key}" name="message" rows="2" maxlength="8000" placeholder="Ask a question or describe the next change..." aria-describedby="session-message-hint" required>${escape(ui.messageDrafts[key] || "")}</textarea><p id="session-message-hint" class="meta">${t(hint)}</p><div class="composer-actions"><span class="meta">Ctrl / ⌘ + Enter to send</span>${replying ? button("stop-message", run.followup.stopRequested ? "Stopping reply" : "Stop reply", "stop", "small", "", run.followup.stopRequested || run.status === "needs_reconciliation") : html`<button type="submit" class="btn primary small" ${!allowed || sending ? "disabled" : ""}>${icon(sending ? "loader" : "arrow")}${t(sending ? "Sending message" : "Send message")}</button>`}</div></form>`;
+    const working = ["running", "waiting_approval"].includes(run.status) && (run.followup?.stepId || run.steps[run.index]?.id) === step.id && run.controlMode === "studio";
+    const live = working && run.acceptingMessages && !run.followup?.stopRequested;
+    const idle = step.providerThreadId && step.status !== "queued" && ["succeeded", "failed", "cancelled", "paused", "waiting_review"].includes(run.status) && run.controlMode === "studio" && !run.approval && !run.followup && !run.steps.some(item => item.activeTurnId);
+    const mode = ui.messageModes[key] || "queue", pending = (run.pendingMessages || []).filter(item => item.stepId === step.id);
+    const disabled = sending || !(live || idle) || (live && mode === "interrupt" && run.interruptRequested) || pending.length >= 20;
+    const hint = run.status === "needs_reconciliation" ? "Check provider state before continuing this conversation." : working ? run.interruptRequested ? "Stopping the current turn and its tools. Your instruction will run next." : mode === "interrupt" ? "Stop this turn, then apply your instruction. Existing file changes are preserved." : replying ? "Finish this turn, then answer queued messages. Other agents will not run automatically." : "Finish this turn, then process queued instructions in order before handing off." : !step.providerThreadId || step.status === "queued" ? "This agent can receive messages after its session starts." : !idle && !replying ? "Wait for the current turn to finish or pause the workflow to send a message." : "Uses this agent's saved permissions. Other agents will not run automatically.";
+    const queue = pending.length ? html`<div class="message-queue" role="region" aria-label="Queued instructions"><div class="message-queue-heading">${t("Queued instructions")} <span class="badge gray">${pending.length}</span></div><ol>${pending.map(item => html`<li><span>${item.mode === "interrupt" ? html`<strong>${t("Adjust current work")}</strong> ` : ""}${escape(item.message)}</span>${button("remove-message", "", "close", "icon-btn", `data-id="${item.id}" aria-label="${t("Remove queued instruction")}" title="${t("Remove queued instruction")}"`, item.mode === "interrupt" && run.interruptRequested)}</li>`).join("")}</ol></div>` : "";
+    return html`<form class="session-composer" data-form="session-message" data-id="${key}">${queue}${run.activeMessage?.stepId === step.id ? html`<p class="meta command-active">${icon("activity")}${t("Working on your instruction")}</p>` : ""}<label for="session-message">Message ${escape(step.agent.name)}</label><textarea id="session-message" data-id="${key}" name="message" rows="2" maxlength="8000" placeholder="Ask a question or describe the next change..." aria-describedby="session-message-hint" required>${escape(ui.messageDrafts[key] || "")}</textarea><p id="session-message-hint" class="meta" role="status">${t(hint)}</p><div class="composer-actions">${working ? html`<select id="message-mode" data-id="${key}" aria-label="Instruction timing"><option value="queue" ${mode === "queue" ? "selected" : ""}>${t("Add to queue")}</option><option value="interrupt" ${mode === "interrupt" ? "selected" : ""}>${t("Adjust current work")}</option></select>` : html`<span class="meta">Ctrl / ⌘ + Enter to send</span>`}${replying ? button("stop-message", run.followup.stopRequested ? "Stopping reply" : "Stop reply", "stop", "small", "", run.followup.stopRequested || run.status === "needs_reconciliation") : ""}<button type="submit" class="btn primary small" ${disabled ? "disabled" : ""}>${icon(sending ? "loader" : "arrow")}${t(sending ? "Sending message" : working ? mode === "interrupt" ? "Adjust current work" : "Add to queue" : "Send message")}</button></div></form>`;
   }
 
   async function sendConversation(run, step, value, fromReview = false) {
@@ -748,7 +753,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     ui.sendingMessages.add(key); ui.followRun = false;
     render(true);
     try {
-      await engine.message(step.id, text, run);
+      await engine.message(step.id, text, run, run.acceptingMessages ? ui.messageModes[key] || "queue" : undefined);
       if (fromReview && (ui.reviewDraft || "").trim() === text && ui.reviewId === run.review?.id) {
         ui.reviewDraft = "";
         const input = document.getElementById("review-feedback");
@@ -1301,6 +1306,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       if (ui.artifactId === id) ui.artifactId = ui.openArtifacts[Math.min(index, ui.openArtifacts.length - 1)] || null;
       render(true); app.querySelector(".focus-file-tab[aria-selected=true], .focus-output-list")?.focus({ preventScroll: true });
     }
+    else if (action === "remove-message") await engine.control("remove-message", currentRun(), { messageId: target.dataset.id });
     else if (action === "stop-message") await engine.control("stop-message", currentRun());
     else if (action === "review-message") await sendConversation(currentRun(), currentRun().steps.find(step => step.id === currentRun().review?.stepId), ui.reviewDraft, true);
     else if (action === "follow-run") { ui.followRun = true; ui.step = currentRun().followup ? currentRun().steps.findIndex(step => step.id === currentRun().followup.stepId) : Math.min(currentRun().index, currentRun().steps.length - 1); render(); }
@@ -1548,6 +1554,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     if (event.target.id === "local-import-query") renderLocalImportList();
   });
   document.addEventListener("change", event => {
+    if (event.target.id === "message-mode") { ui.messageModes[event.target.dataset.id] = event.target.value; render(true); document.getElementById("message-mode-control")?.focus({ preventScroll: true }); return; }
     const input = event.target;
     if (input.id === "max-concurrent-runs") { state.maxConcurrentRuns = Number(input.value); persist(); render(); return; }
     if (input.id === "ui-language") { state.language = input.value; setLanguage(input.value); document.querySelector(".skip-link").textContent = t("Skip to content"); persist(); render(); return; }

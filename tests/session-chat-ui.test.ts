@@ -24,6 +24,15 @@ test("Agent conversations support separate drafts, safe rendered replies, stop a
       if (path === "/api/events") { res.writeHead(200, { "Content-Type": "text/event-stream" }); res.write(": connected\n\n"); streams.add(res); req.on("close", () => streams.delete(res)); return; }
       if (path === "/api/runs/message" || path === "/api/runs/control") {
         let body = ""; for await (const chunk of req) body += chunk; const input = JSON.parse(body); commands.push({ path, ...input }); assert.equal(input.id, run.id);
+        if (path.endsWith("/message") && input.mode) {
+          const queued = { id: `queued-${commands.length}`, stepId: input.stepId, message: input.message, mode: input.mode, createdAt: at };
+          const queue = run.pendingMessages ??= []; if (input.mode === "interrupt") { queue.unshift(queued); run.interruptRequested = true; } else queue.push(queued);
+          emit(); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(run)); return;
+        }
+        if (input.action === "remove-message") {
+          run.pendingMessages = run.pendingMessages?.filter(item => item.id !== input.messageId); emit();
+          res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(run)); return;
+        }
         if (path.endsWith("/message")) {
           if (rejectMessage) { res.writeHead(409, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "The concurrent task limit is reached. Finish a task before sending a message." })); return; }
           const step = run.steps.find(item => item.id === input.stepId)!;
@@ -78,5 +87,24 @@ test("Agent conversations support separate drafts, safe rendered replies, stop a
   await page.getByRole("button", { name: "질문 보내기", exact: true }).click(); await expect.poll(() => commands.at(-1)?.stepId).toBe("planner");
   assert.equal(run.review?.id, "review"); assert.equal(commands.at(-1).path, "/api/runs/message"); finish();
   await expect(page.getByRole("button", { name: "확정 후 계속", exact: true })).toBeVisible();
+  delete run.review; run.status = "running"; run.index = 1; run.steps[1].status = "running"; run.acceptingMessages = true; emit();
+  await page.getByRole("button", { name: "Coder 세션 보기", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "명령 처리 방식" })).toHaveText("큐에 추가");
+  const queue = page.getByRole("button", { name: "큐에 추가", exact: true });
+  await composer.fill("턴이 끝나면 회귀 테스트도 확인"); await queue.click();
+  await expect.poll(() => commands.at(-1)?.mode).toBe("queue"); await expect(composer).toHaveValue("");
+  await expect(page.getByRole("region", { name: "대기 중인 명령" })).toContainText("턴이 끝나면 회귀 테스트도 확인");
+  await composer.fill("아직 보내지 않은 초안"); emit(); await expect(composer).toHaveValue("아직 보내지 않은 초안");
+  await page.getByRole("button", { name: "대기 명령 취소", exact: true }).click();
+  await expect(page.getByRole("region", { name: "대기 중인 명령" })).toHaveCount(0); assert.equal(commands.at(-1).action, "remove-message");
+  await page.getByRole("combobox", { name: "명령 처리 방식" }).click(); await page.getByRole("option", { name: "현재 작업 조정", exact: true }).click();
+  await composer.fill("현재 접근을 멈추고 락 순서부터 확인"); await composer.press("Control+Enter");
+  await expect.poll(() => commands.at(-1)?.mode).toBe("interrupt");
+  await expect(page.getByRole("button", { name: "현재 작업 조정", exact: true })).toBeDisabled();
+  await expect(page.getByRole("region", { name: "대기 중인 명령" })).toContainText("현재 접근을 멈추고 락 순서부터 확인");
+  await page.getByRole("combobox", { name: "명령 처리 방식" }).click(); await page.getByRole("option", { name: "큐에 추가", exact: true }).click(); await expect(queue).toBeEnabled();
+  await page.getByRole("button", { name: "전체화면 종료", exact: true }).click(); await expect(queue).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 }); await expect(composer).toBeVisible();
+  await expect.poll(() => page.locator("body").evaluate(el => el.scrollWidth <= innerWidth)).toBe(true);
   assert.deepEqual(errors, []);
 });
