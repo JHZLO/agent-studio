@@ -82,6 +82,15 @@ The actual app was inspected at 375 px and 900 px. Its page width stayed within 
 
 The normal test suite does not consume model quota. `scripts/probe-codex.ts`, `scripts/smoke-codex.ts`, `scripts/probe-controls.ts`, and `scripts/probe-recovery.ts` are deliberate local diagnostics. The smoke test expects an isolated server on port 4184 and uses port 4196 for its fixture. Live logs and provider identifiers stay under ignored `.local/`.
 
+## Shared revision groups
+
+Validated on 2026-10-24 with provider fixtures and real local HTTP receipts.
+
+- Reviewer and Tester return to the same Coder and consume one shared automatic revision budget. Different-target overlapping groups and inconsistent limits are rejected. Existing single-source loop counters remain compatible.
+- Engine tests verify repeated Coder / Reviewer / Tester execution, fresh session IDs in the same project, retained old attempts, causal findings and evidence passed through rechecks, persisted limits after restart, one extra human-authorized round, and a new plan lock after revisiting Planner.
+- Chromium verifies group membership changes, synchronized limits, suggested rules, return arrows, persisted settings after reload, revision history, finding rendering, source-attempt navigation, full-screen documents, and layout at 390 px. Reported HTML is rendered as text.
+- No live model defect loop was run for this change. Fixtures determine decisions; local HTTP calls supply the Tester execution receipts.
+
 ## Human checkpoints and revision loops
 
 Checked on 2026-10-24, macOS arm64. The feature-only source tree passed strict TypeScript checks, the production build, and all 76 automated tests. Separate pending loading-feedback work was excluded from that tree.

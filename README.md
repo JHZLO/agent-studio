@@ -70,7 +70,7 @@ Codex agents also have **Fast mode**: **Default** follows local Codex settings, 
 
 Open **Flows** and select a step. **After this step** controls when a person reviews its outputs: continue automatically, review every completion, or review when issues remain. Enable **Lock reviewed outputs** to approve the exact output versions. These rules belong to the flow, while prompts, models, skills, and tool permissions stay in **Agent library**. Active tasks keep the flow rules saved at their start.
 
-**Suggested rules** adds a locked Planner review, a Coder / Reviewer loop with up to three automatic revisions, and a final human review. Review the proposed settings before applying them. Existing flows remain automatic until you save rules.
+**Suggested rules** adds a locked Planner review, a shared Coder / Reviewer / Tester loop with up to three automatic revisions, and a final human review. Review the proposed settings before applying them. Existing flows remain automatic until you save rules.
 
 When a task needs review, open **Review outputs**. Read the plan and QA sheet, request changes with feedback, or choose **Lock only** to approve and remain paused. **Lock and continue** starts the next step. Later drafts can be compared with earlier drafts, and **Attempts** retains previous conversations and outputs. Human review does not grant file, shell, or network permissions.
 
@@ -78,7 +78,24 @@ To plan with the agent before coding, set the Planner step to **Review before co
 
 Attach the relevant architecture skills to both Planner and Coder when the plan must follow a specific codebase. Ask Planner to specify the package layout, responsibilities, transaction boundaries, and test criteria, then inspect those choices before locking. Skill instructions guide implementation; they do not replace code review or test evidence.
 
-Under **Automatic revisions**, choose an earlier step and a limit from 1 to 10. A `revise` result reruns that interval in fresh sessions before the human checkpoint. The limit counts extra attempts after the first pass through the interval. At the limit, the task either requests human feedback or stops. Human feedback authorizes one more attempt without resetting the automatic limit. Loop ranges cannot overlap. Execution errors stop the task instead of consuming revision attempts.
+Under **Automatic revisions**, choose an earlier step and a limit from 1 to 10. A `revise` result reruns that interval in fresh sessions before the human checkpoint. The limit counts extra attempts after the first pass through the interval. At the limit, the task either requests human feedback or stops. Human feedback authorizes one more attempt without resetting the automatic limit. Select **Agents sharing this revision limit** to let Reviewer and Tester both return to Coder. All selected agents share the same limit and limit action. Changing the limit from any member updates the whole group. Groups with different return targets cannot overlap. Execution errors stop the task instead of consuming revision attempts.
+
+For example, if Reviewer requests one fix and Tester then requests another, the group has used two automatic revisions. Every return reruns Coder, Reviewer, and any remaining checks in order. The project folder stays the same; each repeated step gets a fresh session. Prior findings and evidence are included in the repeated checks, even after their original outputs move to history.
+
+```mermaid
+flowchart LR
+    P[Planner] --> H[Human plan lock]
+    H --> C[Coder]
+    C --> R[Reviewer]
+    R -->|Pass| T[Tester]
+    R -->|Needs changes| C
+    T -->|Needs changes| C
+    T -->|Pass| F[Final review]
+```
+
+The flow canvas draws return arrows. The task shows the shared count, the latest return reason, and **Revisions** with the source agent, target agent, code reference, findings, and evidence links. **Open source attempt** opens the conversation that requested the fix. Findings remain agent reports; recorded tool evidence and fresh checks establish whether a fix worked.
+
+At a human review limit, enter feedback and choose **Run one more revision** or **Revisit plan**. Revisiting the plan clears the old lock and holds Coder until the new plan is approved. Neither action resets the automatic revision counter. Cancellation remains available from the task controls.
 
 Changes to an approved plan require another human review. Approval checks the reviewed output versions and project fingerprint; changed files require a fresh revision. Pending human reviews survive a runner restart. Superseded outputs remain in history and are not passed forward as current evidence.
 
