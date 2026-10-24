@@ -1,4 +1,8 @@
 export default {
+  "Review the plan together": "플래너와 계획 검토하기",
+  "Questions or changes for the plan": "계획에 대한 질문 또는 수정 요청",
+  "Ask questions or request changes below. Planner will return a new draft. Coder stays queued until you lock the plan and continue.": "아래에 질문이나 수정할 내용을 적어주세요. 플래너가 새 초안을 작성합니다. 계획을 확정하고 계속하기 전까지 코더는 대기합니다.",
+
   "Connections": "연결",
   ". Other agents keep their relative order.": "입니다. 다른 에이전트의 상대 순서는 유지됩니다.",
   "/ Already in Studio": "/ 이미 등록됨",

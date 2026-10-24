@@ -104,7 +104,8 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   await page.getByRole("button", { name: "Run task", exact: true }).click();
   await expect(page.getByRole("button", { name: "Lock and continue", exact: true })).toBeVisible();
   assert.deepEqual(calls.map(step => step.agent.id), ["planner"]);
-  await page.locator("#review-feedback").fill("Include concurrent duplicate requests");
+  await expect(page.getByRole("heading", { name: "Review the plan together", exact: true })).toBeVisible();
+  await page.getByLabel("Questions or changes for the plan", { exact: true }).fill("Include concurrent duplicate requests");
   await page.getByRole("button", { name: "Request revision", exact: true }).click();
   await expect(page.locator(".review-heading")).toContainText("Draft 2");
   assert.equal(calls.at(-1)?.feedback, "Include concurrent duplicate requests");
