@@ -114,6 +114,7 @@ test("Shared loop controls show return paths, causal history and a human replan"
   await expect(page.getByRole("button", { name: "Run one more revision", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Approve and continue", exact: true })).toHaveCount(0);
   await expect(page.locator(".revision-banner")).toContainText("Tester → Coder");
+  await expect(page.locator(".revision-banner .revision-count")).toHaveText("Automatic revisions 2/2");
   await page.locator(".revision-evidence").getByRole("button", { name: "View revision history", exact: true }).click();
   await expect(page.locator(".revision-record")).toHaveCount(2);
   await expect(page.locator(".revision-record").first()).toContainText("Tester → Coder");

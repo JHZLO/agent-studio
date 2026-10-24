@@ -1,4 +1,4 @@
-.markdown-body { min-width: 0; color: var(--ink); font: 14px/1.75 var(--font-sans); overflow-wrap: anywhere; }
+.markdown-body { min-width: 0; max-width: 100%; color: var(--ink); font: 14px/1.75 var(--font-sans); white-space: normal; overflow-wrap: anywhere; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
 .markdown-body :is(h1, h2, h3, h4, h5, h6) { display: block; font-family: inherit; font-weight: 700; line-height: 1.45; letter-spacing: normal; margin: 1.5em 0 .65em; }
@@ -37,6 +37,23 @@
 .review-document-heading .btn { flex: none; }
 .review-document-body { max-height: 400px; overflow: auto; }
 .review-summary { max-height: 240px; overflow: auto; }
+.review-history-body { margin: 10px 0; }
+.review-workspace, .review-workspace > *, .attempts-list, .attempts-list > details { min-width: 0; }
+.review-diff .markdown-body { font-size: 13px; }
+.handoff-card .markdown-body { font-size: 13px; }
+.handoff-card .markdown-body h3 { font-family: inherit; font-size: 1.1em; line-height: 1.45; }
+.handoff-card .markdown-body p { margin: 0 0 1em; font-size: inherit; line-height: inherit; color: inherit; }
+.handoff-card .markdown-body > :last-child { margin-bottom: 0; }
+.import-message .markdown-body { font-size: inherit; }
+.skill-document { margin-top: 18px; }
+.skill-raw-source { margin-top: 18px; }
+.skill-raw-source summary { cursor: pointer; color: var(--sky-ink); font-size: 12px; }
+.revision-summary { margin: 10px 0; min-width: 0; }
+.revision-summary .markdown-body, .revision-finding .markdown-body { font-size: inherit; }
+.revision-summary .markdown-body p { display: block; white-space: normal; max-height: none; overflow: visible; margin: 0 0 1em; font-size: inherit; line-height: inherit; }
+.revision-banner .revision-summary, .revision-evidence .revision-summary { max-height: 7em; overflow: auto; font-size: 12px; }
+.revision-finding .markdown-body code { display: inline; white-space: inherit; font-size: .9em; color: inherit; }
+.revision-finding .markdown-body pre code { font: inherit; }
 .evidence-body > .markdown-body { font-size: 13px; margin-top: 16px; }
 .evidence-navigation { flex-wrap: wrap; }
 dialog[open].document-reader { display: flex; flex-direction: column; width: min(1040px, calc(100% - 28px)); height: min(860px, 92dvh); max-height: 92dvh; overflow: hidden; }
