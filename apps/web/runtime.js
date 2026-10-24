@@ -98,6 +98,7 @@ export class StudioEngine {
   atCapacity(limit) { return this.activeRuns.size >= limit; }
   usesProject(id) { return [...this.activeRuns.values()].some(run => run.project.id === id); }
   update(run, latest = false) {
+    if (run?.parent) { void request("/api/runs/read", { id: run.parent.runId }).then(parent => this.update(parent)).catch(error => window.dispatchEvent(new CustomEvent("studio-error", { detail: error.message }))); return; }
     if (!run || run.eventSeq < (this.versions.get(run.id) ?? -1)) return;
     this.versions.set(run.id, run.eventSeq);
     if (this.isActive(run)) this.activeRuns.set(run.id, run); else this.activeRuns.delete(run.id);

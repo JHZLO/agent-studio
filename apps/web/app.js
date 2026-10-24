@@ -11,6 +11,7 @@ import "./markdown.css";
 import "./session-focus.css";
 import "./session-chat.css";
 import "./run-map.css";
+import "./delegation.css";
 import "./revision-loops.css";
 import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
 (() => {
@@ -184,6 +185,17 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     toastTimer = setTimeout(() => element.classList.remove("show"), 4200);
   }
 
+  function sessionRun(run = currentRun()) { return run?.children?.find(child => child.id === ui.childRunId) || run; }
+  function sessionStep(run = sessionRun()) { return run?.steps[run.parent ? 0 : ui.step]; }
+  function childSessions(run, step) {
+    const children = (run.children || []).filter(child => child.parent.stepId === step.id);
+    if (!children.length) return "";
+    return html`<details class="child-sessions" open><summary>${t("Child sessions")} <span class="badge gray">${children.length}</span></summary>${children.map(child => html`<button class="run-step child-step ${ui.childRunId === child.id ? "active" : ""}" data-action="child-session" data-id="${child.id}" aria-pressed="${ui.childRunId === child.id}" style="${agentStyle(child.steps[0].agent)}"><span><strong>${escape(child.steps[0].agent.name)}</strong><small>${escape(child.parent.task)}</small><small>${t(statusNames[child.status])} / ${t({ pending: "Awaiting collection", accepted: "Collected", discarded: "Discarded" }[child.parent.resolution])}</small>${sessionClock(child.steps[0], child, true)}</span></button>`).join("")}</details>`;
+  }
+  function childBanner(run) {
+    if (!run.parent) return "";
+    return html`<div class="child-banner"><span class="badge gray">${t("Child session")}</span><p>${escape(run.parent.task)}</p><details class="child-folder"><summary>Working folder</summary><code>${escape(run.cwd)}</code></details>${run.approval ? html`<p>${escape(run.approval.description)}</p><pre class="approval-details">${escape(run.approval.details)}</pre>${button("child-approve", "Approve request", "check", "small primary")}` : ""}${["running", "queued", "waiting_approval", "needs_reconciliation"].includes(run.status) ? button("child-cancel", "Cancel child", "stop", "small") : html`<p class="meta">${t("Review this result with the parent agent.")}</p>`}</div>`;
+  }
   function currentRun() {
     return ui.historyId ? state.history.find(run => run.id === ui.historyId) : state.run;
   }
@@ -512,12 +524,13 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       <div class="field"><label for="agent-permission">Permission level</label><select id="agent-permission" name="permissionLevel" aria-describedby="permission-description">${Object.entries(permissionLevels).map(([value, level]) => html`<option value="${value}"${selected(agent.permissionLevel || "ask", value)}>${t(level.label)}</option>`).join("")}</select><small id="permission-description">${t(permissionLevels[agent.permissionLevel || "ask"].description)}</small></div>
       <div class="field skill-binding-field">${bindingField(agent.skillBindings || [])}</div>
       <div class="field agent-tools-field"><span class="field-label">Allowed tools</span><div class="checks">${[["read", "Read files"], ["write", "Write files"], ["shell", "Shell"], ["browser", "Browser"]].map(([value, label]) => html`<label class="check"><input type="checkbox" name="tools" value="${value}"${agent.tools.includes(value) ? " checked" : ""}>${t(label)}</label>`).join("")}</div></div>
+      <fieldset class="agent-delegation"><legend>Parallel delegation</legend><label class="check"><input type="checkbox" name="delegationEnabled"${agent.delegation?.enabled ? " checked" : ""}>Allow child agents</label><p class="meta">Children use their saved model and skills, within this agent's permissions. Depth is limited to one. Writes use isolated worktrees.</p><div class="field"><label for="delegate-limit">Maximum parallel children</label><select id="delegate-limit" name="maxChildren">${[1, 2, 3].map(value => html`<option value="${value}"${selected(agent.delegation?.maxChildren || 3, value)}>${value}</option>`).join("")}</select></div><span class="field-label">Allowed child presets</span><div class="checks">${state.agents.map(item => html`<label class="check"><input type="checkbox" name="allowedAgentIds" value="${escape(item.id)}"${(agent.delegation?.allowedAgentIds || [agent.id]).includes(item.id) ? " checked" : ""}>${escape(item.name)}</label>`).join("")}</div></fieldset>
       <div class="context-chip">${icon("leaf")}New session per step. Only the brief, decisions, and artifact references carry forward.</div></form>`;
   }
 
   function agentsView() {
     return heading(html`Your <em>agents</em>`, "Give each role a purpose, a model, and a set of boundaries.", button("new-agent", "New agent", "plus", "primary"), "Reusable presets") +
-      html`<div class="content-grid">${state.agents.map(agent => html`<section class="panel agent-card tilt" style="${agentStyle(agent)}"><div class="card-top">${agentIcon(agent, true)}<div><h2>${escape(agent.name)}</h2><p>${providerName(agent.provider)} / ${escape(agent.model)}</p></div></div><p>${escape(t(roles[agent.role].description))}</p><dl class="agent-card-settings"><div><dt>Permissions</dt><dd><span class="badge ${agent.permissionLevel === "bypass" ? "red" : agent.permissionLevel === "project" ? "amber" : "gray"}" title="${escape(t(permissionLevels[agent.permissionLevel || "ask"].description))}">${t(permissionLevels[agent.permissionLevel || "ask"].label)}</span></dd></div>${agent.provider === "codex" ? html`<div><dt>Fast mode</dt><dd><span class="badge ${agent.codexFastMode === "on" ? "" : "gray"}">${t({ default: "Follow Codex", on: "On", off: "Off" }[agent.codexFastMode || "default"])}</span></dd></div>` : ""}</dl><div class="skill-list">${agent.skillBindings.length ? agent.skillBindings.map(skill => html`<span class="skill-chip" aria-pressed="true">${icon("file")}${escape(skill.name)}</span>`).join("") : html`<span class="meta">No skills attached</span>`}</div><div class="card-footer">${currentFlow().workflow.includes(agent.id) ? html`<span class="badge">In workflow</span>` : button("add-existing", "Add to workflow", "plus", "small", `data-id="${escape(agent.id)}"`)}${button("edit-agent", "Edit agent", "edit", "text small", `data-id="${escape(agent.id)}"`)}</div></section>`).join("")}</div>`;
+      html`<div class="content-grid">${state.agents.map(agent => html`<section class="panel agent-card tilt" style="${agentStyle(agent)}"><div class="card-top">${agentIcon(agent, true)}<div><h2>${escape(agent.name)}</h2><p>${providerName(agent.provider)} / ${escape(agent.model)}</p></div></div><p>${escape(t(roles[agent.role].description))}</p><dl class="agent-card-settings"><div><dt>Permissions</dt><dd><span class="badge ${agent.permissionLevel === "bypass" ? "red" : agent.permissionLevel === "project" ? "amber" : "gray"}" title="${escape(t(permissionLevels[agent.permissionLevel || "ask"].description))}">${t(permissionLevels[agent.permissionLevel || "ask"].label)}</span></dd></div>${agent.provider === "codex" ? html`<div><dt>Fast mode</dt><dd><span class="badge ${agent.codexFastMode === "on" ? "" : "gray"}">${t({ default: "Follow Codex", on: "On", off: "Off" }[agent.codexFastMode || "default"])}</span></dd></div>` : ""}${agent.delegation?.enabled ? html`<div><dt>Parallel delegation</dt><dd><span class="badge">${agent.delegation.maxChildren} ${t("children max")}</span></dd></div>` : ""}</dl><div class="skill-list">${agent.skillBindings.length ? agent.skillBindings.map(skill => html`<span class="skill-chip" aria-pressed="true">${icon("file")}${escape(skill.name)}</span>`).join("") : html`<span class="meta">No skills attached</span>`}</div><div class="card-footer">${currentFlow().workflow.includes(agent.id) ? html`<span class="badge">In workflow</span>` : button("add-existing", "Add to workflow", "plus", "small", `data-id="${escape(agent.id)}"`)}${button("edit-agent", "Edit agent", "edit", "text small", `data-id="${escape(agent.id)}"`)}</div></section>`).join("")}</div>`;
   }
 
   function bindingField(bindings) {
@@ -677,8 +690,8 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   function sessionView(run) {
     if (!run) return emptyState("message", "Watch your team work", "Start a task. Each agent opens a fresh session, completes a step, and hands its outputs to the next agent.", button("run", "Run task", "play", "primary"));
     ui.step = Math.min(Math.max(ui.step, 0), run.steps.length - 1);
-    const step = run.steps[ui.step];
-    const expanded = ui.expandedRunId === run.id;
+    const viewed = sessionRun(run), step = sessionStep(viewed);
+    const expanded = ui.expandedRunId === (run.parent?.runId || run.id);
     const isCurrent = engine.isActive(run) || run.id === state.run?.id;
     const controls = run.followup ? run.status === "needs_reconciliation" ? button("cancel", "Cancel", "stop", "danger") : button("stop-message", run.followup.stopRequested ? "Stopping reply" : "Stop reply", "stop", "", "", run.followup.stopRequested || run.status === "needs_reconciliation") : isCurrent ? (run.status === "running" ? button("pause", run.pauseRequested ? "Pause requested" : "Pause", "pause", "", "", run.pauseRequested) : run.status === "paused" && run.controlMode === "studio" ? button("resume", "Resume", "play", "primary") : "") + (["queued", "running", "paused", "waiting_approval", "waiting_review", "needs_reconciliation", "cancelling"].includes(run.status) ? button("cancel", run.status === "cancelling" ? "Cancelling" : "Cancel", run.status === "cancelling" ? "loader" : "stop", `danger${run.status === "cancelling" ? " is-busy" : ""}`, "", run.status === "cancelling") : button("run", "Run again", "play", "primary")) : button("live-session", "Latest run", "arrow");
     const activeStep = run.steps.find(item => item.id === run.followup?.stepId) || run.steps[Math.min(run.index, run.steps.length - 1)];
@@ -693,7 +706,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Flow v${run.flow.revision || 1}${run.lockedPlan ? t` / Approved plan v${run.lockedPlan.version}` : ""}${revisionGroups(run.flow).filter(group => run.loopCounts?.[group.key]).map(group => t` / ${escape(run.steps.find(s => s.agent.id === group.target)?.agent.name)} revisions ${run.loopCounts[group.key]}/${group.maxCycles}`).join("")}</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => html`<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
       <div class="run-view-toolbar"><div class="segment run-view-switch" role="group" aria-label="Task view">${[["details", "Detail view", "message"], ["map", "Agent view", "agents"]].map(([layout, label, symbol]) => html`<button type="button" class="${ui.runLayout === layout ? "active" : ""}" data-action="run-layout" data-layout="${layout}" aria-pressed="${ui.runLayout === layout}">${icon(symbol)}${t(label)}</button>`).join("")}</div></div>
       ${revisionBanner(run)}
-      ${ui.runLayout === "map" ? runMapView(run) : html`<section class="panel run-grid${expanded ? " expanded-workspace" : ""}"${expanded ? ` style="--session-split:${ui.focusSplit}%" data-pane="${ui.focusPane}"` : ""}>${expanded ? focusHeader(run) : ""}<aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2 tabindex="-1">${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, run)}${followControl}${expanded ? "" : button("session-fullscreen", "Full screen", "fit", "small")}</div></div><nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ...(run.revisionHistory?.length ? [["revisions", "Revisions"]] : []), ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, run) : ui.sessionTab === "revisions" ? revisionsView(run) : ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div>${expanded && run.review?.stepId === step.id && run.status === "waiting_review" && ["conversation", "review"].includes(ui.sessionTab) ? html`<div class="focus-review">${reviewControls(run, run.review)}</div>` : ui.sessionTab === "conversation" ? messageComposer(run, step) : ""}<div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${expanded ? html`<div class="session-divider" role="separator" aria-label="Resize conversation and document panels" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65" aria-valuenow="${ui.focusSplit}" tabindex="0"></div>` : ""}${evidenceView(run)}</section>`}`;
+      ${ui.runLayout === "map" ? runMapView(run) + run.steps.map(item => childSessions(run, item)).join("") : html`<section class="panel run-grid${expanded ? " expanded-workspace" : ""}"${expanded ? ` style="--session-split:${ui.focusSplit}%" data-pane="${ui.focusPane}"` : ""}>${expanded ? focusHeader(run) : ""}<aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step && !ui.childRunId ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step && !ui.childRunId}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>${childSessions(run, item)}`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2 tabindex="-1">${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, viewed)}${viewed.parent ? "" : followControl}${expanded ? "" : button("session-fullscreen", "Full screen", "fit", "small")}</div></div>${childBanner(viewed)}<nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ...(run.revisionHistory?.length ? [["revisions", "Revisions"]] : []), ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, viewed) : ui.sessionTab === "revisions" ? revisionsView(run) : ui.sessionTab === "terminal" ? terminalView(step, viewed) : ui.sessionTab === "handoff" ? handoffView(step, viewed) : messagesView(step)}</div>${expanded && run.review?.stepId === step.id && run.status === "waiting_review" && ["conversation", "review"].includes(ui.sessionTab) ? html`<div class="focus-review">${reviewControls(run, run.review)}</div>` : ui.sessionTab === "conversation" ? messageComposer(viewed, step) : ""}<div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${expanded ? html`<div class="session-divider" role="separator" aria-label="Resize conversation and document panels" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65" aria-valuenow="${ui.focusSplit}" tabindex="0"></div>` : ""}${evidenceView(viewed)}</section>`}`;
   }
 
   function runMapView(run) {
@@ -813,10 +826,11 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   function attemptsView(step, run) {
     const attempts = [...(run.stepHistory || []).filter(item => item.agent.id === step.agent.id), step];
     const selectedAttempt = attempts.find(item => item.id === ui.attemptId) || step;
-    return html`<div class="attempts-list"><p class="meta">Each revision uses a fresh session. Earlier conversations and outputs remain available.</p>${attempts.map(item => html`<details data-attempt-id="${escape(item.id)}" ${item.id === selectedAttempt.id ? "open" : ""}><summary>Attempt ${item.attempt || 1} / ${t(statusNames[item.status])} ${sessionClock(item, run, true)}</summary>${item.feedback ? html`<p class="handoff-card">${escape(item.feedback)}</p>` : ""}${item.messages.map(message => html`<div class="message ${message.type}"><div class="message-label">${escape(t(message.type))}</div><div class="message-text">${escape(message.text)}</div></div>`).join("")}${item.finalText ? html`<details><summary>Structured result</summary><pre class="artifact-preview">${escape(item.finalText)}</pre></details>` : ""}<div class="artifact-list">${run.artifacts.filter(a => a.stepId === item.id).map(artifactRow).join("")}</div></details>`).join("")}</div>`;
+    return html`<div class="attempts-list"><p class="meta">Each revision uses a fresh session. Earlier conversations and outputs remain available.</p>${attempts.map(item => html`<details data-attempt-id="${escape(item.id)}" ${item.id === selectedAttempt.id ? "open" : ""}><summary>Attempt ${item.attempt || 1} / ${t(statusNames[item.status])} ${sessionClock(item, run, true)}</summary>${item.feedback ? html`<p class="handoff-card">${escape(item.feedback)}</p>` : ""}${item.messages.map(message => html`<div class="message ${message.type}"><div class="message-label">${escape(t(message.type))}</div><div class="message-text">${escape(message.text)}</div></div>`).join("")}${item.finalText ? html`<details><summary>Structured result</summary><pre class="artifact-preview">${escape(item.finalText)}</pre></details>` : ""}<div class="artifact-list">${run.artifacts.filter(a => a.stepId === item.id).map(artifactRow).join("")}</div>${childSessions(run, item)}</details>`).join("")}</div>`;
   }
 
   function terminalView(step, run) {
+    if (run.parent) return html`<p class="meta">Use this child conversation to send instructions.</p>`;
     if (step.agent.provider !== "codex") return html`<div class="empty"><h2>Claude Code session</h2><p>Follow this session in Conversation and Tool activity. Shared terminal control is available for Codex sessions.</p></div>`;
     const attached = run.terminal?.connected && run.terminal.stepId === step.id;
     const ready = engine.isActive(run) && run.status === "paused" && run.controlMode === "studio" && step.providerThreadId;
@@ -828,10 +842,10 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     const replying = run.followup?.stepId === step.id;
     const working = ["running", "waiting_approval"].includes(run.status) && (run.followup?.stepId || run.steps[run.index]?.id) === step.id && run.controlMode === "studio";
     const live = working && run.acceptingMessages && !run.followup?.stopRequested;
-    const idle = step.providerThreadId && step.status !== "queued" && ["succeeded", "failed", "cancelled", "paused", "waiting_review"].includes(run.status) && run.controlMode === "studio" && !run.approval && !run.followup && !run.steps.some(item => item.activeTurnId);
+    const idle = !run.parent && step.providerThreadId && step.status !== "queued" && ["succeeded", "failed", "cancelled", "paused", "waiting_review"].includes(run.status) && run.controlMode === "studio" && !run.approval && !run.followup && !run.steps.some(item => item.activeTurnId);
     const mode = ui.messageModes[key] || "queue", pending = (run.pendingMessages || []).filter(item => item.stepId === step.id);
     const disabled = sending || !(live || idle) || (live && mode === "interrupt" && run.interruptRequested) || pending.length >= 20;
-    const hint = run.status === "needs_reconciliation" ? "Check provider state before continuing this conversation." : working ? run.interruptRequested ? "Stopping the current turn and its tools. Your instruction will run next." : mode === "interrupt" ? "Stop this turn, then apply your instruction. Existing file changes are preserved." : replying ? "Finish this turn, then answer queued messages. Other agents will not run automatically." : "Finish this turn, then process queued instructions in order before handing off." : !step.providerThreadId || step.status === "queued" ? "This agent can receive messages after its session starts." : !idle && !replying ? "Wait for the current turn to finish or pause the workflow to send a message." : "Uses this agent's saved permissions. Other agents will not run automatically.";
+    const hint = run.parent && !working ? "Review this result with the parent agent." : run.status === "needs_reconciliation" ? "Check provider state before continuing this conversation." : working ? run.interruptRequested ? "Stopping the current turn and its tools. Your instruction will run next." : mode === "interrupt" ? "Stop this turn, then apply your instruction. Existing file changes are preserved." : replying ? "Finish this turn, then answer queued messages. Other agents will not run automatically." : "Finish this turn, then process queued instructions in order before handing off." : !step.providerThreadId || step.status === "queued" ? "This agent can receive messages after its session starts." : !idle && !replying ? "Wait for the current turn to finish or pause the workflow to send a message." : "Uses this agent's saved permissions. Other agents will not run automatically.";
     const queue = pending.length ? html`<div class="message-queue" role="region" aria-label="Queued instructions"><div class="message-queue-heading">${t("Queued instructions")} <span class="badge gray">${pending.length}</span></div><ol>${pending.map(item => html`<li><span>${item.mode === "interrupt" ? html`<strong>${t("Adjust current work")}</strong> ` : ""}${escape(item.message)}</span>${button("remove-message", "", "close", "icon-btn", `data-id="${item.id}" aria-label="${t("Remove queued instruction")}" title="${t("Remove queued instruction")}"`, item.mode === "interrupt" && run.interruptRequested)}</li>`).join("")}</ol></div>` : "";
     return html`<form class="session-composer" data-form="session-message" data-id="${key}">${queue}${run.activeMessage?.stepId === step.id ? html`<p class="meta command-active">${icon("activity")}${t("Working on your instruction")}</p>` : ""}<label for="session-message">Message ${escape(step.agent.name)}</label><textarea id="session-message" data-id="${key}" name="message" rows="2" maxlength="8000" placeholder="Ask a question or describe the next change..." aria-describedby="session-message-hint" required>${escape(ui.messageDrafts[key] || "")}</textarea><p id="session-message-hint" class="meta" role="status">${t(hint)}</p><div class="composer-actions">${working ? html`<select id="message-mode" data-id="${key}" aria-label="Instruction timing"><option value="queue" ${mode === "queue" ? "selected" : ""}>${t("Add to queue")}</option><option value="interrupt" ${mode === "interrupt" ? "selected" : ""}>${t("Adjust current work")}</option></select>` : html`<span class="meta">Ctrl / ⌘ + Enter to send</span>`}${replying ? button("stop-message", run.followup.stopRequested ? "Stopping reply" : "Stop reply", "stop", "small", "", run.followup.stopRequested || run.status === "needs_reconciliation") : ""}<button type="submit" class="btn primary small" ${disabled ? "disabled" : ""}>${icon(sending ? "loader" : "arrow")}${t(sending ? "Sending message" : working ? mode === "interrupt" ? "Adjust current work" : "Add to queue" : "Send message")}</button></div></form>`;
   }
@@ -856,7 +870,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       if (fromReview && currentRun()?.id === run.id) { ui.step = run.steps.findIndex(item => item.id === step.id); ui.sessionTab = "conversation"; }
     } catch (error) { toast(error.message); }
     finally { ui.sendingMessages.delete(key); render(true); }
-    if (currentRun()?.id === run.id && currentRun().steps[ui.step]?.id === step.id) {
+    if (sessionRun()?.id === run.id && sessionStep()?.id === step.id) {
       const conversation = app.querySelector(".session-content");
       if (conversation) conversation.scrollTop = conversation.scrollHeight;
       document.getElementById("session-message")?.focus({ preventScroll: true });
@@ -922,7 +936,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   }
 
   function openArtifact(id) {
-    if (!focusedDocument(currentRun(), id)) return;
+    if (!focusedDocument(sessionRun(), id)) return;
     ui.fileRequest++; ui.fileLoading = false; ui.fileError = ""; ui.fileBrowserActive = false;
     ui.artifactId = id;
     if (ui.expandedRunId) {
@@ -938,7 +952,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   }
 
   async function loadProjectFiles(path) {
-    const run = currentRun(); if (!run) return;
+    const run = sessionRun(); if (!run) return;
     path ??= ui.fileBrowser?.runId === run.id ? ui.fileBrowser.path : ".";
     const requestId = ++ui.fileRequest;
     ui.fileBrowserActive = true; ui.artifactId = null; ui.focusPane = "document"; ui.fileLoading = true; ui.fileError = "";
@@ -946,18 +960,18 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     render(true);
     try {
       const result = await request("/api/runs/files", { id: run.id, path });
-      if (requestId === ui.fileRequest && ui.expandedRunId === run.id) ui.fileBrowser = { ...result, runId: run.id };
+      if (requestId === ui.fileRequest && ui.expandedRunId === (run.parent?.runId || run.id)) ui.fileBrowser = { ...result, runId: run.id };
     } catch (error) { if (requestId === ui.fileRequest) ui.fileError = error.message; }
     finally { if (requestId === ui.fileRequest) { ui.fileLoading = false; render(true); } }
   }
 
   async function openProjectFile(path) {
-    const run = currentRun(); if (!run) return;
+    const run = sessionRun(); if (!run) return;
     const requestId = ++ui.fileRequest;
     ui.fileLoading = true; ui.fileError = ""; render(true);
     try {
       const file = await request("/api/runs/file", { id: run.id, path });
-      if (requestId !== ui.fileRequest || ui.expandedRunId !== run.id) return;
+      if (requestId !== ui.fileRequest || ui.expandedRunId !== (run.parent?.runId || run.id)) return;
       const id = `source:${run.id}:${encodeURIComponent(file.path)}`;
       const document = { id, runId: run.id, sourcePath: file.path, name: file.path, content: file.content, type: "Current file", agent: run.project.name, loadedAt: Date.now() };
       ui.sourceDocuments = [...ui.sourceDocuments.filter(item => item.id !== id), document];
@@ -1022,7 +1036,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   });
 
   function evidenceView(run) {
-    if (ui.expandedRunId === run.id) return focusedEvidenceView(run);
+    if (ui.expandedRunId === (run.parent?.runId || run.id)) return focusedEvidenceView(run);
     const artifact = run.artifacts.find(item => item.id === ui.artifactId);
     return html`<aside class="evidence-panel" aria-label="Task outputs"><div class="panel-heading"><h2>${icon("file")}Outputs <span class="badge gray">${run.artifacts.length}</span></h2></div><div class="evidence-body">${artifact ? html`<div class="evidence-navigation">${button("all-outputs", "All outputs", "arrow", "text small back-button")}${isMarkdown(artifact) ? button("open-document", "Read in full", "fit", "text small", `data-id="${escape(artifact.id)}"`) : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${escape(t(artifact.type))}</p>${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : ""}${artifactPreview(artifact)}` : html`${revisionEvidence(run)}<div class="evidence-intro"><h3>See the work behind the status.</h3><p>Plans, changes, and QA evidence appear here as each agent finishes.</p></div>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output ${["running", "queued"].includes(run.status) ? "is-pending" : ""}">${icon("file")}<span>${["running", "queued"].includes(run.status) ? t("Waiting for the first output") : t("No outputs recorded")}<small>Outputs appear here when an agent produces them.</small></span></div>`}`}</div></aside>`;
   }
@@ -1273,7 +1287,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     ui.starting = false;
     if (startingState !== state) return;
     if (state.run) state.history = [structuredClone(state.run), ...state.history.filter(item => item.id !== state.run.id)];
-    ui.view = "run"; ui.historyId = null; ui.step = 0; ui.followRun = true; ui.sessionTab = "conversation"; ui.artifactId = null;
+    ui.view = "run"; ui.childRunId = null; ui.historyId = null; ui.step = 0; ui.followRun = true; ui.sessionTab = "conversation"; ui.artifactId = null;
     ui.starting = true;
     try { await engine.start({ brief, agents, project, flow, approvalRequired: state.approvalRequired }); }
     catch (error) { toast(error.message); ui.view = "home"; }
@@ -1289,10 +1303,10 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   }
 
   function findArtifact(id) {
-    return [state.run, ...state.history].filter(Boolean).flatMap(run => run.artifacts).find(artifact => artifact.id === id);
+    return [state.run, ...state.history].filter(Boolean).flatMap(run => [...run.artifacts, ...(run.children || []).flatMap(child => child.artifacts)]).find(artifact => artifact.id === id);
   }
 
-  const asyncActions = new Set(["import-local", "confirm-local-import", "open-imported-session", "more-imported-messages", "confirm-remove-project", "browse-folders", "open-folder", "project-settings", "run", "pause", "resume", "approve", "cancel", "skill-detail", "refresh-skills", "skill-snapshot", "refresh-models", "connect-account", "official-login", "toggle-connection", "test-connection", "reconcile", "terminal-open", "terminal-close", "open-run", "confirm-reset"]);
+  const asyncActions = new Set(["child-approve", "child-cancel", "import-local", "confirm-local-import", "open-imported-session", "more-imported-messages", "confirm-remove-project", "browse-folders", "open-folder", "project-settings", "run", "pause", "resume", "approve", "cancel", "skill-detail", "refresh-skills", "skill-snapshot", "refresh-models", "connect-account", "official-login", "toggle-connection", "test-connection", "reconcile", "terminal-open", "terminal-close", "open-run", "confirm-reset"]);
   document.addEventListener("click", async event => {
     if (ui.navigationActions && !event.target.closest(".sidebar-actions")) closeNavigationActions();
     const target = event.target.closest("[data-action]");
@@ -1398,10 +1412,10 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       if (ui.artifactId === id) ui.artifactId = ui.openArtifacts[Math.min(index, ui.openArtifacts.length - 1)] || null;
       render(true); app.querySelector(".focus-file-tab[aria-selected=true], .focus-output-list")?.focus({ preventScroll: true });
     }
-    else if (action === "remove-message") await engine.control("remove-message", currentRun(), { messageId: target.dataset.id });
+    else if (action === "remove-message") await engine.control("remove-message", sessionRun(), { messageId: target.dataset.id });
     else if (action === "stop-message") await engine.control("stop-message", currentRun());
     else if (action === "review-message") await sendConversation(currentRun(), currentRun().steps.find(step => step.id === currentRun().review?.stepId), ui.reviewDraft, true);
-    else if (action === "follow-run") { ui.followRun = true; ui.step = currentRun().followup ? currentRun().steps.findIndex(step => step.id === currentRun().followup.stepId) : Math.min(currentRun().index, currentRun().steps.length - 1); render(); }
+    else if (action === "follow-run") { ui.childRunId = null; ui.followRun = true; ui.step = currentRun().followup ? currentRun().steps.findIndex(step => step.id === currentRun().followup.stepId) : Math.min(currentRun().index, currentRun().steps.length - 1); render(); }
     else if (action === "help") { if (ui.navigationOpen) closeNavigation(); helpModal(); }
     else if (action === "close-modal") closeModal();
     else if (action === "run") await startRun();
@@ -1416,22 +1430,22 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       composer.classList.remove("idea-flash"); void composer.offsetWidth; composer.classList.add("idea-flash");
     }
     else if (action === "cancel") await engine.cancel(currentRun());
-    else if (action === "live-session") { ui.view = "run"; ui.historyId = null; ui.artifactId = null; ui.followRun = true; ui.step = Math.min(state.run?.index || 0, (state.run?.steps.length || 1) - 1); render(); }
+    else if (action === "live-session") { ui.view = "run"; ui.childRunId = null; ui.historyId = null; ui.artifactId = null; ui.followRun = true; ui.step = Math.min(state.run?.index || 0, (state.run?.steps.length || 1) - 1); render(); }
     else if (action === "review-approve" || action === "review-lock") await engine.review(action === "review-lock" ? "approve-review-only" : "approve-review", "", currentRun());
     else if (action === "review-replan") {
       const form = target.closest("form");
       if (!form.reportValidity()) return;
       await engine.review("replan-review", new FormData(form).get("feedback"), currentRun());
     }
-    else if (action === "revision-history") { ui.runLayout = "details"; ui.sessionTab = "revisions"; render(); }
-    else if (action === "revision-attempt") {
+    else if (action === "revision-history") { ui.childRunId = null; ui.runLayout = "details"; ui.sessionTab = "revisions"; render(); }
+    else if (action === "revision-attempt") { ui.childRunId = null;
       const run = currentRun(), step = [...run.steps, ...(run.stepHistory || [])].find(item => item.id === target.dataset.stepId);
       if (!step) return;
       ui.step = run.steps.findIndex(item => item.agent.id === step.agent.id); ui.followRun = false; ui.sessionTab = "attempts"; ui.attemptId = step.id; render();
       const attempt = app.querySelector(`[data-attempt-id="${CSS.escape(step.id)}"]`);
       if (attempt) { attempt.open = true; attempt.scrollIntoView({ block: "nearest" }); }
     }
-    else if (action === "review-open") { ui.runLayout = "details"; ui.sessionTab = "review"; ui.step = currentRun().steps.findIndex(s => s.id === currentRun().review.stepId); render(); }
+    else if (action === "review-open") { ui.childRunId = null; ui.runLayout = "details"; ui.sessionTab = "review"; ui.step = currentRun().steps.findIndex(s => s.id === currentRun().review.stepId); render(); }
     else if (action === "flow-recommended") {
       const flow = currentFlow(), crew = flow.workflow.map(id => state.agents.find(a => a.id === id));
       const planner = crew.find(a => a.role === "planner"), coder = crew.find(a => a.role === "coder"), final = crew.at(-1);
@@ -1452,14 +1466,17 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       currentFlow().rules = flow.rules; persist(); await flush(); closeModal(); render();
     }
     else if (action === "run-layout") { ui.runLayout = target.dataset.layout; render(true); }
-    else if (action === "run-map-step") {
+    else if (action === "run-map-step") { ui.childRunId = null;
       const run = currentRun(), index = Number(target.dataset.index), step = run?.steps[index];
       if (!step) return;
       ui.runLayout = "details"; ui.step = index; ui.followRun = false; ui.artifactId = null;
       ui.sessionTab = run.review?.stepId === step.id ? "review" : "conversation";
       render(); app.querySelector(".session-head h2")?.focus();
     }
-    else if (action === "run-step") { ui.step = Number(target.dataset.index); ui.followRun = false; render(); }
+    else if (action === "child-approve") await engine.approve(sessionRun());
+    else if (action === "child-cancel") await engine.cancel(sessionRun());
+    else if (action === "child-session") { ui.childRunId = id; ui.runLayout = "details"; ui.followRun = false; ui.sessionTab = "conversation"; ui.artifactId = null; ui.fileRequest++; ui.fileLoading = false; render(); }
+    else if (action === "run-step") { ui.childRunId = null; ui.step = Number(target.dataset.index); ui.artifactId = null; ui.followRun = false; render(); }
     else if (action === "session-tab") { ui.sessionTab = target.dataset.tab; render(); }
     else if (action === "choose-skills") skillPicker(target.closest("form"));
     else if (action === "back-skills") skillPicker();
@@ -1503,7 +1520,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       catch (error) { target.disabled = false; toast(error.message); }
     }
     else if (action === "skill-snapshot") {
-      const binding = currentRun().steps[ui.step].agent.skillSnapshots.find(item => item.id === id);
+      const binding = sessionStep().agent.skillSnapshots.find(item => item.id === id);
       try { ui.pickerDraft = null; showSkillFiles(binding.name, await catalog.readSnapshot(binding)); }
       catch (error) { toast(t`Snapshot unavailable: ${error.message}`); }
     }
@@ -1618,12 +1635,12 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
         catch (error) { toast(error.message); return; }
       }
       ui.historyId = state.run?.id === id ? null : id;
-      ui.view = "run"; ui.step = 0; ui.followRun = false; ui.artifactId = null; ui.navigationOpen = false; ui.navigationActions = false; ui.sessionTab = currentRun()?.review ? "review" : "conversation"; if (currentRun()?.review) ui.step = currentRun().steps.findIndex(s => s.id === currentRun().review.stepId); render();
+      ui.view = "run"; ui.childRunId = null; ui.step = 0; ui.followRun = false; ui.artifactId = null; ui.navigationOpen = false; ui.navigationActions = false; ui.sessionTab = currentRun()?.review ? "review" : "conversation"; if (currentRun()?.review) ui.step = currentRun().steps.findIndex(s => s.id === currentRun().review.stepId); render();
       if (fromDrawer) app.querySelector(".main").focus({ preventScroll: true });
     }
     else if (action === "artifact") {
       const artifact = findArtifact(id);
-      if (artifact || focusedDocument(currentRun(), id)) openArtifact(id);
+      if (artifact || focusedDocument(sessionRun(), id)) openArtifact(id);
     }
     else if (action === "open-document") openDocument(id);
     else if (action === "document-format") {
@@ -1637,7 +1654,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
         option.setAttribute("aria-pressed", String(active));
       }
     }
-    else if (action === "download-artifact") { const artifact = focusedDocument(currentRun(), id) || findArtifact(id); if (artifact?.mime) { const link = document.createElement("a"); link.href = `/api/artifacts/${currentRun().id}/${artifact.id}`; link.download = artifact.name; link.click(); } else if (artifact) download(artifact.name, artifact.content); }
+    else if (action === "download-artifact") { const artifact = focusedDocument(sessionRun(), id) || findArtifact(id); if (artifact?.mime) { const link = document.createElement("a"); link.href = `/api/artifacts/${sessionRun().id}/${artifact.id}`; link.download = artifact.name; link.click(); } else if (artifact) download(artifact.name, artifact.content); }
     else if (action === "export") download("agent-studio-workflow.json", JSON.stringify({ version: 1, name: currentFlow().name, workflow: currentFlow().workflow, rules: currentFlow().rules || [], revision: currentFlow().revision || 1, agents: state.agents.filter(agent => currentFlow().workflow.includes(agent.id)).map(({ skills, ...agent }) => agent), brief: state.brief, approvalRequired: state.approvalRequired }, null, 2), "application/json");
     else if (action === "reset") {
       if (ui.navigationOpen) closeNavigation();
@@ -1702,7 +1719,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     try {
     const values = new FormData(form);
     if (form.dataset.form === "flow-rule") await saveFlowRule(form);
-    else if (form.dataset.form === "session-message") await sendConversation(currentRun(), currentRun().steps[ui.step], values.get("message"));
+    else if (form.dataset.form === "session-message") await sendConversation(sessionRun(), sessionStep(), values.get("message"));
     else if (form.dataset.form === "review-feedback") await engine.review("request-revision", values.get("feedback"), currentRun());
     else if (form.dataset.form === "flow") saveFlow(form);
     else if (form.dataset.form === "project") await saveProject(form);
@@ -1714,7 +1731,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       const prompt = values.get("prompt").trim();
       if (!name || !prompt) return toast("Add a name and instructions before saving.");
       const [provider, auth] = values.get("connection").split("|");
-      Object.assign(agent, { name, prompt, provider, auth, model: values.get("model"), permissionLevel: values.get("permissionLevel"), codexFastMode: form.elements.codexFastMode.value, tools: [...form.querySelectorAll('[name="tools"]:checked')].map(input => input.value), skillBindings: JSON.parse(values.get("skillBindings")) });
+      Object.assign(agent, { name, prompt, provider, auth, model: values.get("model"), permissionLevel: values.get("permissionLevel"), codexFastMode: form.elements.codexFastMode.value, delegation: { enabled: values.has("delegationEnabled"), maxChildren: Number(values.get("maxChildren")), allowedAgentIds: values.getAll("allowedAgentIds") }, tools: [...form.querySelectorAll('[name="tools"]:checked')].map(input => input.value), skillBindings: JSON.parse(values.get("skillBindings")) });
       persist(); if (modal.open) closeModal(); render(); toast(engine.activeRuns.size ? "Preset saved. The active run keeps its original settings." : "Preset saved. Your next run will use these settings.");
     }
     else if (form.dataset.form === "skill-sources") {

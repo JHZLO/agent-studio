@@ -118,7 +118,7 @@ test("Agent views follow live status and open sessions without changing the run"
   }).toEqual({ inViewport: true, twoColumns: true });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.emulateMedia({ reducedMotion: "reduce" });
-  assert.equal(await character(1).locator(".agent-icon").evaluate(icon => getComputedStyle(icon).animationName), "none");
+  await expect(character(1).locator(".agent-icon")).toHaveCSS("animation-name", "none");
   run.status = "succeeded"; run.index = run.steps.length;
   for (const step of run.steps) { step.status = "succeeded"; step.completedAt = new Date().toISOString(); }
   publish(); await expect(page.locator('.run-map-character[data-status="succeeded"]')).toHaveCount(4);

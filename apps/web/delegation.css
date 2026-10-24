@@ -1,0 +1,21 @@
+.agent-delegation { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 16px; padding: 18px; min-width: 0; }
+.agent-delegation legend { font-weight: 700; padding: 0 8px; }
+.agent-delegation .field { max-width: 260px; margin: 14px 0; }
+.agent-delegation .checks { flex-wrap: wrap; gap: 10px 18px; }
+.child-sessions { margin: 0 8px 14px 22px; border-left: 2px solid var(--line); padding-left: 10px; min-width: 0; }
+.child-sessions summary { cursor: pointer; font-size: 12px; padding: 6px 2px; }
+.child-sessions .child-step { padding: 10px; width: 100%; margin-top: 5px; }
+.child-step small { display: block; overflow: hidden; text-overflow: ellipsis; max-width: 100%; white-space: nowrap; }
+.child-step > span { min-width: 0; width: 100%; }
+.child-banner { padding: 12px 20px; border-bottom: 1px dashed var(--line); font-size: 13px; }
+.child-banner p { margin: 8px 0; }
+.child-banner small { display: block; overflow-wrap: anywhere; color: var(--muted); }
+.child-banner .btn { margin-top: 8px; margin-right: 8px; }
+
+.child-folder { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.child-folder summary { cursor: pointer; }
+.child-folder code { display: block; overflow-wrap: anywhere; padding-top: 4px; }
+.expanded-workspace .child-sessions { margin: 0 8px; padding: 0 10px; max-width: 440px; flex-shrink: 0; }
+.expanded-workspace .child-sessions .child-step { display: inline-flex; width: auto; max-width: 190px; margin: 4px 4px 0 0; }
+.expanded-workspace .child-step small { display: block; font-size: 10px; }
+.expanded-workspace .child-step .session-duration { display: inline-flex; }
