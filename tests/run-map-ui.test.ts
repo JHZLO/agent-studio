@@ -110,11 +110,12 @@ test("Agent views follow live status and open sessions without changing the run"
   await expect(page.locator('.run-step[data-index="1"]')).toContainText("Attempt 2");
   await map.click();
   await page.setViewportSize({ width: 390, height: 844 });
-  const positions = await page.locator(".run-map-character").evaluateAll(characters => characters.map(character => {
-    const box = character.getBoundingClientRect(); return { x: box.x, y: box.y, right: box.right };
-  }));
-  assert(positions.every(pos => pos.x >= 0 && pos.right <= 390));
-  assert(positions[0].y === positions[1].y && positions[2].y > positions[0].y);
+  await expect.poll(async () => {
+    const positions = await page.locator(".run-map-character").evaluateAll(characters => characters.map(character => {
+      const box = character.getBoundingClientRect(); return { x: box.x, y: box.y, right: box.right };
+    }));
+    return { inViewport: positions.length === 4 && positions.every(pos => pos.x >= 0 && pos.right <= 390), twoColumns: positions.length === 4 && Math.abs(positions[0].y - positions[1].y) < 1 && positions[2].y > positions[0].y };
+  }).toEqual({ inViewport: true, twoColumns: true });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.emulateMedia({ reducedMotion: "reduce" });
   assert.equal(await character(1).locator(".agent-icon").evaluate(icon => getComputedStyle(icon).animationName), "none");
