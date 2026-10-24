@@ -6,6 +6,8 @@ import "./skills.js";
 import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js";
 import { enhanceSelects, closeSelects } from "./selects.js";
 import { sessionTiming, formatDuration } from "./session-time.js";
+import { isMarkdown, renderMarkdown } from "./markdown.js";
+import "./markdown.css";
 (() => {
   "use strict";
 
@@ -668,6 +670,7 @@ import { sessionTiming, formatDuration } from "./session-time.js";
   function reviewView(run) {
     const review = run.review || run.reviewHistory?.at(-1);
     if (!review) return html`<p>No human review is pending.</p>`;
+    if (ui.reviewId !== review.id) { ui.reviewId = review.id; ui.reviewDraft = ""; }
     const step = [...run.steps, ...(run.stepHistory || [])].find(s => s.id === review.stepId);
     const previous = (run.stepHistory || []).filter(s => s.agent.id === step?.agent.id).at(-1);
     const pending = engine.isActive(run) && run.status === "waiting_review" && !!run.review;
@@ -675,10 +678,10 @@ import { sessionTiming, formatDuration } from "./session-time.js";
     const outputs = review.artifactIds.map(id => run.artifacts.find(a => a.id === id)).filter(Boolean);
     const target = run.steps.find(s => s.agent.id === review.returnTo);
     const planning = step?.agent.role === "planner" && review.lockOutputs;
-    return html`<div class="review-workspace"><div class="review-heading"><h3>${review.kind === "scope_change" ? t("Review the requested scope change") : review.kind === "loop_limit" ? t("Choose the next revision") : planning ? t("Review the plan together") : t("Review this handoff")}</h3><span class="badge ${pending ? "amber" : "gray"}">${pending ? t`Draft ${step?.attempt || 1}` : review.action === "approved" ? t("Approved") : t("Revision requested")}</span></div><p>${escape(review.summary)}</p>${pending && planning ? html`<p class="guide-note">Ask questions or request changes below. Planner will return a new draft. Coder stays queued until you lock the plan and continue.</p>` : ""}
+    return html`<div class="review-workspace"><div class="review-heading"><h3>${review.kind === "scope_change" ? t("Review the requested scope change") : review.kind === "loop_limit" ? t("Choose the next revision") : planning ? t("Review the plan together") : t("Review this handoff")}</h3><span class="badge ${pending ? "amber" : "gray"}">${pending ? t`Draft ${step?.attempt || 1}` : review.action === "approved" ? t("Approved") : t("Revision requested")}</span></div><div class="review-summary">${renderMarkdown(review.summary)}</div>${pending && planning ? html`<p class="guide-note">Ask questions or request changes below. Planner will return a new draft. Coder stays queued until you lock the plan and continue.</p>` : ""}
       ${outputs.map(artifact => {
         const before = previous && run.artifacts.find(a => a.stepId === previous.id && a.name === artifact.name);
-        return html`<article class="review-document"><h3>${icon("file")}${escape(artifact.name)}</h3><pre>${escape(artifact.content)}</pre>${before && before.id !== artifact.id ? html`<details class="review-compare"><summary>Compare with previous draft</summary><div class="review-diff"><section><h4>Previous draft</h4><pre>${escape(before.content)}</pre></section><section><h4>Current draft</h4><pre>${escape(artifact.content)}</pre></section></div></details>` : ""}</article>`;
+        return html`<article class="review-document"><div class="review-document-heading"><h3>${icon("file")}${escape(artifact.name)}</h3>${isMarkdown(artifact) ? button("open-document", "Read in full", "fit", "small", `data-id="${escape(artifact.id)}"`) : ""}</div><div class="review-document-body">${artifactPreview(artifact)}</div>${before && before.id !== artifact.id ? html`<details class="review-compare"><summary>Compare with previous draft</summary><div class="review-diff"><section><h4>Previous draft</h4><pre>${escape(before.content)}</pre></section><section><h4>Current draft</h4><pre>${escape(artifact.content)}</pre></section></div></details>` : ""}</article>`;
       }).join("") || html`<p class="meta">This step returned no text artifacts. Inspect Conversation and Tool activity before deciding.</p>`}
       ${pending ? html`<form data-form="review-feedback" data-id="${review.id}" class="review-feedback"><label for="review-feedback">${planning ? t("Questions or changes for the plan") : t`What should ${escape(target?.agent.name || t("the agent"))} change?`}</label><textarea id="review-feedback" name="feedback" maxlength="8000" rows="3" placeholder="Describe the changes or the next approach to try..." required>${escape(ui.reviewDraft)}</textarea><p class="meta">A revision returns to ${escape(target?.agent.name)} and reruns later checks. Previous sessions remain in Attempts.</p><button type="submit" class="btn">${icon("reset")}Request revision</button></form><div class="review-actions">${canApprove ? button("review-lock", review.lockOutputs ? "Lock only" : "Approve only", "lock") + button("review-approve", review.lockOutputs ? "Lock and continue" : "Approve and continue", "check", "primary") : html`<p class="meta">Send a revision request to continue, or cancel this task. No further automatic retries will run without your action.</p>`}</div><p class="meta">${review.lockOutputs ? t("Approval locks these exact output versions. ") : ""}Human review does not grant tool permissions.</p>` : html`<p class="meta">${review.action === "approved" ? t`Approved ${new Date(review.resolvedAt).toLocaleString(locale())}.` : escape(review.feedback || "")}</p>`}
       ${run.reviewHistory?.length ? html`<details class="review-history"><summary>Review history (${run.reviewHistory.length})</summary>${run.reviewHistory.map(item => html`<div><strong>${item.action === "approved" ? t("Approved") : t("Revision requested")}</strong><p>${escape(item.feedback || item.summary)}</p><small>${new Date(item.resolvedAt).toLocaleString(locale())}</small></div>`).join("")}</details>` : ""}</div>`;
@@ -716,7 +719,19 @@ import { sessionTiming, formatDuration } from "./session-time.js";
 
   function evidenceView(run) {
     const artifact = run.artifacts.find(item => item.id === ui.artifactId);
-    return html`<aside class="evidence-panel" aria-label="Task outputs"><div class="panel-heading"><h2>${icon("file")}Outputs <span class="badge gray">${run.artifacts.length}</span></h2></div><div class="evidence-body">${artifact ? html`<div class="evidence-navigation">${button("all-outputs", "All outputs", "arrow", "text small back-button")}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${escape(t(artifact.type))}</p>${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : ""}<pre class="artifact-preview">${artifact.content.split("\n").map(line => html`<span class="${line.startsWith("+") ? "diff-add" : line.startsWith("-") ? "diff-remove" : ""}">${escape(line)}</span>`).join("\n")}</pre>` : html`<div class="evidence-intro"><h3>See the work behind the status.</h3><p>Plans, changes, and QA evidence appear here as each agent finishes.</p></div>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output">${icon("file")}<span>Waiting for the first output<small>${escape(run.steps[0].agent.name)} will hand over ${t(roleOutputs[run.steps[0].agent.role]).toLowerCase()}.</small></span></div>`}`}</div></aside>`;
+    return html`<aside class="evidence-panel" aria-label="Task outputs"><div class="panel-heading"><h2>${icon("file")}Outputs <span class="badge gray">${run.artifacts.length}</span></h2></div><div class="evidence-body">${artifact ? html`<div class="evidence-navigation">${button("all-outputs", "All outputs", "arrow", "text small back-button")}${isMarkdown(artifact) ? button("open-document", "Read in full", "fit", "text small", `data-id="${escape(artifact.id)}"`) : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${escape(t(artifact.type))}</p>${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : ""}${artifactPreview(artifact)}` : html`<div class="evidence-intro"><h3>See the work behind the status.</h3><p>Plans, changes, and QA evidence appear here as each agent finishes.</p></div>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output">${icon("file")}<span>${["running", "queued"].includes(run.status) ? t("Waiting for the first output") : t("No outputs recorded")}<small>Outputs appear here when an agent produces them.</small></span></div>`}`}</div></aside>`;
+  }
+
+  function artifactPreview(artifact) {
+    if (isMarkdown(artifact)) return renderMarkdown(artifact.content);
+    return html`<pre class="artifact-preview">${artifact.content.split("\n").map(line => html`<span class="${line.startsWith("+") ? "diff-add" : line.startsWith("-") ? "diff-remove" : ""}">${escape(line)}</span>`).join("\n")}</pre>`;
+  }
+
+  function openDocument(id) {
+    const artifact = findArtifact(id);
+    if (!artifact || !isMarkdown(artifact)) return;
+    showModal(escape(artifact.name), html`<div class="document-toolbar"><div class="segment" role="group" aria-label="Document format"><button class="active" data-action="document-format" data-format="preview" aria-pressed="true">Preview</button><button data-action="document-format" data-format="source" aria-pressed="false">Markdown source</button></div><p class="meta">${escape(artifact.agent)} / ${escape(t(artifact.type))}</p></div><div class="document-content"><div class="document-preview">${renderMarkdown(artifact.content)}</div><pre class="document-source" hidden>${escape(artifact.content)}</pre></div>`, button("download-artifact", "Download", "download", "", `data-id="${escape(artifact.id)}"`) + button("close-modal", "Close", "", "primary"), true, "Document reader");
+    modal.classList.add("document-reader");
   }
 
   function defaultsView() {
@@ -753,6 +768,7 @@ import { sessionTiming, formatDuration } from "./session-time.js";
     ui.importRequest = null;
     ui.pickerDraft = null; ui.pickerTarget = null;
     if (lastFocused?.isConnected) lastFocused.focus();
+    else if (modal.classList.contains("document-reader") && lastFocused?.dataset.id) app.querySelector(`[data-action="open-document"][data-id="${CSS.escape(lastFocused.dataset.id)}"]`)?.focus({ preventScroll: true });
   }
 
   function activeProject() {
@@ -1251,6 +1267,18 @@ import { sessionTiming, formatDuration } from "./session-time.js";
     else if (action === "artifact") {
       const artifact = findArtifact(id);
       if (artifact) { ui.artifactId = id; render(); }
+    }
+    else if (action === "open-document") openDocument(id);
+    else if (action === "document-format") {
+      const source = target.dataset.format === "source";
+      modal.querySelector(".document-preview").hidden = source;
+      modal.querySelector(".document-source").hidden = !source;
+      modal.querySelector(".document-content").scrollTop = 0;
+      for (const option of modal.querySelectorAll('[data-action="document-format"]')) {
+        const active = option === target;
+        option.classList.toggle("active", active);
+        option.setAttribute("aria-pressed", String(active));
+      }
     }
     else if (action === "download-artifact") { const artifact = findArtifact(id); if (artifact?.mime) { const link = document.createElement("a"); link.href = `/api/artifacts/${currentRun().id}/${artifact.id}`; link.download = artifact.name; link.click(); } else if (artifact) download(artifact.name, artifact.content); }
     else if (action === "export") download("agent-studio-workflow.json", JSON.stringify({ version: 1, name: currentFlow().name, workflow: currentFlow().workflow, rules: currentFlow().rules || [], revision: currentFlow().revision || 1, agents: state.agents.filter(agent => currentFlow().workflow.includes(agent.id)).map(({ skills, ...agent }) => agent), brief: state.brief, approvalRequired: state.approvalRequired }, null, 2), "application/json");

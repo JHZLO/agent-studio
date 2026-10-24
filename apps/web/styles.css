@@ -976,7 +976,7 @@ dialog::backdrop { background: #2b223852; backdrop-filter: blur(4px); }
 .review-workspace { display: grid; gap: 18px; }
 .review-heading, .review-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .review-document { border: 1.5px solid var(--line-2); border-radius: 18px; padding: 18px; background: var(--paper); }
-.review-document h3 { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; margin-bottom: 15px; font-size: 15px; }
+.review-document-heading h3 { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; font-size: 15px; }
 .review-document pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.8; font-family: inherit; }
 .review-feedback { display: grid; gap: 10px; }
 .review-feedback label { font-weight: 700; font-size: 14px; }

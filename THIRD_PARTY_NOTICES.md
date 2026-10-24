@@ -9,6 +9,8 @@ Agent Studio's original source is MIT licensed. Dependencies and external progra
 | Fastify, better-sqlite3, Vite | Local service, persistence, UI build | MIT, see installed package notices |
 | node-pty, xterm.js | Independent terminal process and web terminal | MIT, see installed package notices |
 | Playwright | Real browser QA and screenshots | [Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE) |
+| Marked 18.1.1 | Markdown document rendering | [MIT](https://github.com/markedjs/marked/blob/v18.1.1/LICENSE) |
+| DOMPurify 3.4.17 | Sanitize rendered documents before display | [Apache-2.0 or MPL-2.0](https://github.com/cure53/DOMPurify/blob/3.4.17/LICENSE) |
 | Grafana k6 | Separate local load-test executable, built during setup | [AGPL-3.0](https://github.com/grafana/k6/blob/v2.3.0/LICENSE.md), [exact source](https://github.com/grafana/k6/tree/v2.3.0) |
 | Claude Code | Unmodified official runtime installed separately by setup | [Upstream distribution and terms](https://github.com/anthropics/claude-code) |
 

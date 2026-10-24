@@ -68,7 +68,7 @@ test("Korean UI persists its language while keeping agent data and review contro
   await page.getByRole("button", { name: "작업", exact: true }).click();
   await page.locator('.history-table [data-action="open-run"][data-id="locale-review"]').click();
   await expect(page.getByRole("heading", { name: "New task", exact: true }).first()).toBeVisible();
-  await expect(page.locator(".review-document pre").first()).toHaveText(artifact.content);
+  await expect(page.locator(".review-document .markdown-body").first()).toHaveText(artifact.content);
   await expect(page.getByRole("button", { name: "확정 후 계속", exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(async () => { const bounds = await page.locator(".review-workspace").boundingBox(); return !!bounds && bounds.x >= 0 && bounds.x + bounds.width <= 390; }).toBe(true);
