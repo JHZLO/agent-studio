@@ -958,3 +958,7 @@ dialog::backdrop { background: #2b223852; backdrop-filter: blur(4px); }
 .attempts-list .message { margin-top: 16px; }
 .run-progress .waiting_review { background: var(--butter); }
 @media (max-width: 700px) { .review-diff { grid-template-columns: 1fr; } .review-actions .btn { width: 100%; } }
+
+html:lang(ko) { word-break: keep-all; overflow-wrap: anywhere; }
+.language-field { width: 180px; flex-shrink: 0; }
+@media (max-width: 600px) { .language-field { width: 130px; } }

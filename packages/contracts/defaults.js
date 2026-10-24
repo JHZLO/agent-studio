@@ -24,6 +24,7 @@ const prompts = {
 function initialState() {
   return {
     version: 1,
+    language: "en",
     skillRoots: ["~/.agents/skills", "~/.codex/skills", "~/.claude/skills"],
     agents: Object.entries(roles).map(([role, details]) => ({
       id: role,

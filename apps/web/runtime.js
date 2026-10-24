@@ -1,3 +1,4 @@
+import { t, setLanguage } from "./i18n.js";
 let csrf;
 let revision = 0;
 let pendingState;
@@ -16,11 +17,12 @@ export const bootstrap = async () => {
 };
 export const initial = await bootstrap().catch(error => {
   const panel = document.getElementById("app");
-  panel.textContent = "The local service is unavailable. Start Agent Studio, then retry. ";
-  const retry = document.createElement("button"); retry.className = "btn"; retry.textContent = "Retry"; retry.addEventListener("click", () => location.reload()); panel.append(retry);
+  panel.textContent = t("The local service is unavailable. Start Agent Studio, then retry. ");
+  const retry = document.createElement("button"); retry.className = "btn"; retry.textContent = t("Retry"); retry.addEventListener("click", () => location.reload()); panel.append(retry);
   throw error;
 });
 revision = initial.state.revision;
+setLanguage(initial.state.language);
 
 export async function request(path, body) {
   const payload = body ? JSON.stringify({ ...body, commandId: body.commandId || crypto.randomUUID() }) : undefined;
@@ -41,8 +43,8 @@ export async function request(path, body) {
   throw new Error("The local API could not be reached.");
 }
 const settingsOnly = state => {
-  const { version, agents, flows, activeFlowId, projects, activeProjectId, skillRoots, approvalRequired, brief, navigationCollapsed } = state;
-  return structuredClone({ version, agents, flows, activeFlowId, projects, activeProjectId, skillRoots, approvalRequired, brief, navigationCollapsed });
+  const { version, agents, flows, activeFlowId, projects, activeProjectId, skillRoots, approvalRequired, brief, navigationCollapsed, language } = state;
+  return structuredClone({ version, agents, flows, activeFlowId, projects, activeProjectId, skillRoots, approvalRequired, brief, navigationCollapsed, language });
 };
 export function queueSettings(state) {
   pendingState = settingsOnly(state); announceSave();

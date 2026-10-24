@@ -126,7 +126,7 @@ export class Studio {
     if (method === "reset") {
       if (this.starting || (this.active && activeStatuses.includes(this.active.status))) throw new Error("Finish or cancel the active run before resetting.");
       const previous = this.settings();
-      const state = settingsSchema.parse({ ...initialState(), projects: previous.projects, activeProjectId: previous.activeProjectId, skillRoots: previous.skillRoots });
+      const state = settingsSchema.parse({ ...initialState(), projects: previous.projects, activeProjectId: previous.activeProjectId, skillRoots: previous.skillRoots, language: previous.language });
       this.store.db.transaction(() => { this.store.set("settings", state); this.store.set("connections", []); this.store.set("revision", (this.store.get<number>("revision") ?? 0) + 1); this.store.db.exec("DELETE FROM runs; DELETE FROM events; DELETE FROM imported_sessions;"); this.store.db.prepare("DELETE FROM commands WHERE id != ?").run(input.commandId); })();
       await this.connections.close(); this.active = undefined; return this.store.state();
     }

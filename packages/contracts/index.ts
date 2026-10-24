@@ -42,6 +42,7 @@ export const settingsSchema = z.object({
   activeFlowId: z.string(), projects: z.array(projectSchema).max(100), activeProjectId: z.string().nullable(),
   skillRoots: z.array(z.string().max(1000)).max(12), approvalRequired: z.boolean(), brief: z.string().max(2000),
   navigationCollapsed: z.boolean().optional(),
+  language: z.enum(["en", "ko"]).default("en"),
 }).superRefine((value, ctx) => {
   const ids = new Set(value.agents.map(a => a.id));
   if (ids.size !== value.agents.length || new Set(value.flows.map(f => f.id)).size !== value.flows.length) ctx.addIssue({ code: "custom", message: "Preset and flow IDs must be unique." });
