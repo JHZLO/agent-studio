@@ -19,6 +19,11 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
 
   const app = document.getElementById("app");
   const modal = document.getElementById("modal");
+  // Restoring focus after a render must retain the user's input method.
+  document.addEventListener("pointerdown", () => { document.documentElement.dataset.inputMethod = "pointer"; }, true);
+  document.addEventListener("keydown", event => {
+    if (!event.metaKey && !event.ctrlKey && !event.altKey) document.documentElement.dataset.inputMethod = "keyboard";
+  }, true);
   let persistent = true;
   let state = initial.state;
   setLanguage(state.language);

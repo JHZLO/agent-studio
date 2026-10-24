@@ -63,9 +63,12 @@ test("Project toggles retain completed tasks and update without disrupting the c
   await expect(page.locator(".run-heading h1")).toHaveText("Finished task");
   await expect(page.locator('.artifact-row[data-id="plan-a1"]')).toBeVisible();
   await toggle("a").press("Enter"); await expect(task("a1")).toBeHidden();
+  await expect(toggle("a")).toHaveCSS("outline-style", "solid");
+  await expect(toggle("a")).toHaveCSS("outline-offset", "-3px");
   await toggle("a").press("Space"); await expect(task("a1")).toBeVisible();
   await toggle("b").click(); await expect(branch("b").locator(".project-task-title")).toHaveText("Task b1");
   await expect(toggle("b")).toBeFocused();
+  await expect(toggle("b")).toHaveCSS("outline-style", "none");
   await toggle("b").click();
   await toggle("empty").click(); await expect(branch("empty").locator(".project-tasks-empty")).toHaveText("아직 작업이 없습니다");
   await branch("empty").getByRole("button", { name: "Project empty에서 새 작업", exact: true }).click();
@@ -85,6 +88,7 @@ test("Project toggles retain completed tasks and update without disrupting the c
   await task("a1").focus(); await control("a1", "cancel");
   await expect(task("a1").locator(".badge")).toHaveText("취소됨");
   await expect(task("a1")).toBeFocused();
+  await expect(task("a1")).toHaveCSS("outline-style", "none");
   await expect(branch("a").locator(".nav-count")).toHaveText("3");
   await control("b1", "approve-review");
   await expect(branch("b").locator(".nav-count")).toHaveText("1");
@@ -109,5 +113,33 @@ test("Project toggles retain completed tasks and update without disrupting the c
   await expect(branch("a").locator(".project-task-title")).toHaveText(["Task a2", "Task a1", "Finished task"]);
   await task("finished").click(); await expect(page.locator(".run-heading h1")).toHaveText("Finished task");
   await page.setViewportSize({ width: 1440, height: 1000 });
+  const auditFocus = async (selector: string) => {
+    await page.keyboard.press("Tab");
+    const issues = await page.locator(selector).evaluate(root => {
+      const failures: string[] = [];
+      const controls = [...root.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), [tabindex="0"]')];
+      for (const control of controls) {
+        if (!control.getClientRects().length || getComputedStyle(control).visibility !== "visible") continue;
+        const before = control.getBoundingClientRect();
+        control.focus({ preventScroll: true });
+        if (document.activeElement !== control) continue;
+        const indicator = control.closest(".avatar-choice")?.querySelector(".avatar-choice-body")
+          || (control.matches(".task-row-open") ? control.closest(".task-row") : null)
+          || (control.matches(".task-composer textarea") ? control.closest(".task-composer") : null) || control;
+        const style = getComputedStyle(indicator), after = control.getBoundingClientRect();
+        const name = control.id || control.getAttribute("aria-label") || control.className;
+        if (style.outlineStyle === "none" || parseFloat(style.outlineWidth) < 2) failures.push(`${name}: keyboard focus is not visible`);
+        if (parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth) > 0) failures.push(`${name}: focus extends outside the control`);
+        if (Math.abs(after.width - before.width) > 1 || Math.abs(after.height - before.height) > 1) failures.push(`${name}: focus changes the control size`);
+      }
+      return failures;
+    });
+    assert.deepEqual(issues, []);
+  };
+  await auditFocus(".page-run");
+  for (const view of ["home", "runs", "team", "agents", "skills", "connections", "defaults"]) {
+    await page.locator(`.nav-item[data-view="${view}"]`).click();
+    await auditFocus(`.page-${view}`);
+  }
   assert.deepEqual(errors, []);
 });

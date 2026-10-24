@@ -6,7 +6,6 @@
 .character-space { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: center; justify-items: center; gap: 44px 24px; min-height: 380px; max-width: 1060px; margin: auto; padding: 55px 30px 70px; }
 .run-map-character { display: flex; flex-direction: column; align-items: center; gap: 9px; width: 160px; min-width: 0; padding: 10px; border: 0; border-radius: 28px; background: transparent; color: var(--ink); }
 .run-map-character:nth-child(even) { margin-top: 48px; }
-.run-map-character:focus-visible { outline: 2px solid var(--agent-color); outline-offset: 7px; }
 .character-figure { position: relative; display: grid; place-items: start center; width: 128px; height: 132px; padding-top: 6px; transition: transform .2s; isolation: isolate; }
 .run-map-character:hover .character-figure { transform: translateY(-6px); }
 .character-figure .agent-icon { --size: 100px; border-width: 2px; box-shadow: inset -5px -5px 0 #2b22380c; }
