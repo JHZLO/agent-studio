@@ -1,4 +1,6 @@
 import { t, html, attrs, locale, setLanguage } from "./i18n.js";
+import { flowEdges, flowLayers, relatedSteps } from "../../packages/contracts/flow.ts";
+import "./flow-graph.css";
 import { flowSchema, avatarSchema, revisionGroups } from "../../packages/contracts/index.ts";
 import { roles, models, prompts, initialState, initializeFlows } from "../../packages/contracts/defaults.js";
 import { initial, StudioEngine, request, queueSettings, flush, reset, removeProject, importLocal, saveStatus } from "./runtime.js";
@@ -39,7 +41,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   const catalog = new window.SkillCatalog();
 
   const ui = {
-    view: "home", selected: null, artifactId: null, pendingOrder: null,
+    view: "home", selected: null, artifactId: null,
     expandedRunId: null, openArtifacts: [], artifactFormat: "preview", focusPane: "conversation", focusSplit: 44, focusScroll: 0,
     sourceDocuments: [], fileBrowser: null, fileBrowserActive: false, fileLoading: false, fileError: "", fileRequest: 0,
     runLayout: "details", sessionTab: "conversation", reviewDraft: "", reviewId: null, messageDrafts: {}, messageModes: {}, sendingMessages: new Set(), step: 0, followRun: true, historyId: null, attemptId: null,
@@ -138,7 +140,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     state.history = [...all.values()].sort((a, b) => b.createdAt?.localeCompare(a.createdAt || "") || 0);
     if (ui.view === "run" && !ui.starting && !ui.historyId && viewed && viewed.id !== state.run?.id) ui.historyId = viewed.id;
     if (currentRun()?.id === run.id) {
-      if (ui.followRun) ui.step = run.followup ? run.steps.findIndex(step => step.id === run.followup.stepId) : run.review ? run.steps.findIndex(step => step.id === run.review.stepId) : Math.min(run.index, run.steps.length - 1);
+      if (ui.followRun) ui.step = run.followup ? sessionSteps(run).findIndex(step => step.id === run.followup.stepId) : run.review ? run.steps.findIndex(step => step.id === run.review.stepId) : run.merge?.sessions.some(step => ["running", "waiting_approval"].includes(step.status)) ? sessionSteps(run).findIndex(step => step.purpose === "merge" && ["running", "waiting_approval"].includes(step.status)) : (run.flow.edges && ["running", "waiting_approval"].includes(sessionSteps(run)[ui.step]?.status) ? ui.step : run.flow.edges && run.steps.some(step => ["running", "waiting_approval"].includes(step.status)) ? run.steps.findIndex(step => ["running", "waiting_approval"].includes(step.status)) : Math.min(run.index, run.steps.length - 1));
       if (!run.review && previous === "waiting_review" && run.status === "running" && ui.sessionTab === "review") ui.sessionTab = "conversation";
       if (run.review && run.review.id !== ui.reviewId) {
         ui.reviewId = run.review.id; ui.reviewDraft = ""; ui.sessionTab = "review";
@@ -193,7 +195,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   }
 
   function sessionRun(run = currentRun()) { return run?.children?.find(child => child.id === ui.childRunId) || run; }
-  function sessionStep(run = sessionRun()) { return run?.steps[run.parent ? 0 : ui.step]; }
+  function sessionStep(run = sessionRun()) { return run ? sessionSteps(run)[run.parent ? 0 : ui.step] : undefined; }
   function childSessions(run, step) {
     const children = (run.children || []).filter(child => child.parent.stepId === step.id);
     if (!children.length) return "";
@@ -366,7 +368,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
 
   function builderView() {
     const agent = state.agents.find(item => item.id === ui.selected);
-    return html`<div class="builder-grid ${agent ? "with-inspector" : ""}"><section class="panel canvas-panel"><div class="panel-heading"><div class="flow-meta"><h2>${currentFlow().workflow.length} agents</h2><span class="divider"></span><span class="meta">Reviews and bounded loops</span></div>${button("flow-recommended", "Suggested rules", "spark", "small") + button("library", "Add agent", "plus", "small")}</div><div class="canvas-viewport" aria-label="Agent workflow canvas"><div class="canvas-wrap"><div class="canvas-stage">${canvas()}</div></div></div><div class="canvas-footer"><span class="canvas-tip">${icon("cursor")}${ui.linkFrom ? t("Choose a later input to preview the new order. Esc cancels.") : t("Select a step to set reviews, revisions, and execution order.")}</span><div class="zoom-controls">${button("zoom-out", "", "minus", "text icon-only", attrs`aria-label="Zoom out"`)}<span class="zoom-value">Fit</span>${button("zoom-in", "", "plus", "text icon-only", attrs`aria-label="Zoom in"`)}${button("fit", "", "fit", "text icon-only", attrs`aria-label="Fit workflow"`)}</div></div></section>
+    return html`<div class="builder-grid ${agent ? "with-inspector" : ""}"><section class="panel canvas-panel"><div class="panel-heading"><div class="flow-meta"><h2>${currentFlow().workflow.length} agents</h2><span class="divider"></span><span class="meta">Branches, joins and reviews</span></div>${button("flow-recommended", "Suggested rules", "spark", "small") + button("library", "Add agent", "plus", "small")}</div><div class="canvas-viewport" aria-label="Agent workflow canvas"><div class="canvas-wrap"><div class="canvas-stage">${canvas()}</div></div></div><div class="flow-parallel"><label for="flow-parallel">Parallel agents</label><select id="flow-parallel">${[1, 2, 3, 4, 5, 6, 7, 8].map(value => html`<option value="${value}"${selected(currentFlow().maxParallel ?? 4, value)}>${value}</option>`).join("")}</select><p>Each branch uses its own working folder. Contributors must agree on the merged result before the next agent starts.</p></div><div class="canvas-footer"><span class="canvas-tip">${icon("cursor")}${ui.linkFrom ? t("Choose an input to add a connection. Esc cancels.") : t("Connect one output to several inputs. Select a step to edit its connections and reviews.")}</span><div class="zoom-controls">${button("zoom-out", "", "minus", "text icon-only", attrs`aria-label="Zoom out"`)}<span class="zoom-value">Fit</span>${button("zoom-in", "", "plus", "text icon-only", attrs`aria-label="Zoom in"`)}${button("fit", "", "fit", "text icon-only", attrs`aria-label="Fit workflow"`)}</div></div></section>
       ${agent ? html`<aside class="panel inspector" style="${agentStyle(agent)}" aria-label="Flow step settings"><div class="inspector-header">${agentIcon(agent)}<div><h2>${escape(agent.name)}</h2><p>Step settings</p></div>${button("close-inspector", "", "close", "text icon-only", attrs`aria-label="Close step settings"`)}</div>${stepSettings(agent)}</aside>` : ""}</div><div class="team-footer"><span>${icon("check")}<span id="save-status" class="${saveStatus() === "Saving..." ? "is-saving" : ""}" role="status">${escape(t(saveStatus()))}</span></span></div>`;
   }
 
@@ -376,16 +378,24 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     return { x: 43 + column * 261, y: 65 + row * 230, row, forward: row % 2 === 0 };
   }
 
+  function graphLayout(flow) {
+    const layers = flowLayers(flow), rows = Math.max(1, ...layers.map(layer => layer.length));
+    const height = rows * 230 + 65, width = Math.max(820, layers.length * 280 + 40), positions = new Map();
+    layers.forEach((layer, column) => layer.forEach((id, row) => positions.set(id, { x: 43 + column * 280, y: 65 + row * 230 + (rows - layer.length) * 115 })));
+    return { height, width, positions };
+  }
+
   function canvas() {
-    const height = Math.ceil(Math.max(currentFlow().workflow.length, 1) / 3) * 230 + 20;
+    const graph = currentFlow().edges ? graphLayout(currentFlow()) : null;
+    const height = graph?.height ?? Math.ceil(Math.max(currentFlow().workflow.length, 1) / 3) * 230 + 20;
     let lines = "";
     let nodes = "";
     currentFlow().workflow.forEach((id, index) => {
       const agent = state.agents.find(item => item.id === id);
-      const pos = position(index);
-      const inputSide = index % 3 === 0 && index > 0 ? "top" : pos.forward ? "left" : "right";
-      const outputSide = index % 3 === 2 ? "bottom" : pos.forward ? "right" : "left";
-      if (index < currentFlow().workflow.length - 1) {
+      const pos = graph?.positions.get(id) ?? position(index);
+      const inputSide = graph ? "left" : index % 3 === 0 && index > 0 ? "top" : pos.forward ? "left" : "right";
+      const outputSide = graph ? "right" : index % 3 === 2 ? "bottom" : pos.forward ? "right" : "left";
+      if (!graph && index < currentFlow().workflow.length - 1) {
         const next = position(index + 1);
         const path = pos.row === next.row ? `M ${pos.forward ? pos.x + 208 : pos.x} ${pos.y + 67} H ${pos.forward ? next.x : next.x + 208}` : `M ${pos.x + 104} ${pos.y + 135} V ${next.y}`;
         lines += html`<path class="flow-line" d="${path}" marker-end="url(#arrowhead)"/>`;
@@ -395,41 +405,61 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       nodes += html`<button class="flow-rule-chip ${rule?.review && rule.review !== "auto" ? "has-review" : ""}" style="left:${pos.x}px;top:${pos.y + 148}px" data-action="select-agent" data-id="${escape(id)}" aria-label="Configure transition after ${escape(agent.name)}">${icon(rule?.review && rule.review !== "auto" ? "agents" : "arrow")}${rule?.review === "always" ? (rule.lockOutputs ? t("Review + lock") : t("Human review")) : rule?.review === "on_issue" ? t("Review on issues") : t("Automatic")}</button>`;
       if (rule?.loop) {
         const group = revisionGroups(currentFlow()).find(item => item.target === rule.loop.target);
-        const target = position(currentFlow().workflow.indexOf(rule.loop.target)), lane = group.members.indexOf(id);
+        const target = graph?.positions.get(rule.loop.target) ?? position(currentFlow().workflow.indexOf(rule.loop.target)), lane = group.members.indexOf(id);
         const top = target.y - 14 - lane * 5, sourceTop = pos.y - 14 - lane * 5;
-        const path = pos.row === target.row ? `M ${pos.x + 140} ${pos.y} V ${top} H ${target.x + 140} V ${target.y}` : `M ${pos.x + 140} ${pos.y} V ${sourceTop} H ${806 - lane * 4} V ${top} H ${target.x + 140} V ${target.y}`;
+        const path = graph ? `M ${pos.x + 140} ${pos.y} V ${Math.min(pos.y, target.y) - 14 - lane * 5} H ${target.x + 140} V ${target.y}` : pos.row === target.row ? `M ${pos.x + 140} ${pos.y} V ${top} H ${target.x + 140} V ${target.y}` : `M ${pos.x + 140} ${pos.y} V ${sourceTop} H ${806 - lane * 4} V ${top} H ${target.x + 140} V ${target.y}`;
         lines += html`<path class="flow-return-line ${ui.selected === id ? "selected" : ""}" d="${path}" marker-end="url(#return-arrowhead)"/>`;
         nodes += html`<button class="flow-loop-chip" style="left:${pos.x}px;top:${pos.y + 182}px" data-action="select-agent" data-id="${escape(id)}">${icon("reset")}<span class="loop-chip-label">${t`Back to ${escape(state.agents.find(a => a.id === rule.loop.target)?.name)} / max ${rule.loop.maxCycles}`}</span>${group.members.length > 1 ? html`<span class="shared-loop-mark">Shared</span>` : ""}</button>`;
       }
     });
-    return html`<svg class="connections-svg" viewBox="0 0 820 ${height}" style="height:${height}px" aria-hidden="true"><defs><marker id="arrowhead" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0 0L5 2.5L0 5" fill="none" stroke="#2b2238" stroke-width="1"/></marker><marker id="return-arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="#8650ad" stroke-width="1.5"/></marker></defs>${lines}</svg><div class="flow-caption" style="top:27px">${icon("message")} YOUR BRIEF</div>${nodes}${!currentFlow().workflow.length ? html`<div style="padding:100px 70px"><h2>No agents yet</h2><p style="margin-top:15px">Add an agent to create the first step.</p></div>` : ""}`;
+    if (graph) for (const edge of flowEdges(currentFlow())) {
+      const from = graph.positions.get(edge.from), to = graph.positions.get(edge.to), x = from.x + 208, y = from.y + 67, middle = (x + to.x) / 2;
+      lines += html`<path class="flow-line" data-from="${escape(edge.from)}" data-to="${escape(edge.to)}" d="M ${x} ${y} C ${middle} ${y}, ${middle} ${to.y + 67}, ${to.x} ${to.y + 67}" marker-end="url(#arrowhead)"/>`;
+    }
+    return html`<svg class="connections-svg" viewBox="0 0 ${graph?.width ?? 820} ${height}" style="width:${graph?.width ?? 820}px;height:${height}px" aria-hidden="true"><defs><marker id="arrowhead" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0 0L5 2.5L0 5" fill="none" stroke="#2b2238" stroke-width="1"/></marker><marker id="return-arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="#8650ad" stroke-width="1.5"/></marker></defs>${lines}</svg><div class="flow-caption" style="top:27px">${icon("message")} YOUR BRIEF</div>${nodes}${!currentFlow().workflow.length ? html`<div style="padding:100px 70px"><h2>No agents yet</h2><p style="margin-top:15px">Add an agent to create the first step.</p></div>` : ""}`;
   }
 
   function sizeCanvas() {
     const viewport = document.querySelector(".canvas-viewport");
     if (!viewport) return;
-    const height = Math.ceil(Math.max(currentFlow().workflow.length, 1) / 3) * 230 + 20;
-    const fit = Math.max(.95, Math.min((viewport.clientWidth - 12) / 820, (viewport.clientHeight - 10) / height, 1.12));
+    const graph = currentFlow().edges ? graphLayout(currentFlow()) : null;
+    const height = graph?.height ?? Math.ceil(Math.max(currentFlow().workflow.length, 1) / 3) * 230 + 20, width = graph?.width ?? 820;
+    const fit = Math.max(graph ? .45 : .95, Math.min((viewport.clientWidth - 12) / width, (viewport.clientHeight - 10) / height, 1.12));
     const scale = ui.zoom ?? fit;
     const stage = viewport.querySelector(".canvas-stage");
     stage.style.transform = `scale(${scale})`;
-    stage.style.height = `${height}px`;
+    stage.style.height = `${height}px`; stage.style.width = `${width}px`;
     const wrap = viewport.querySelector(".canvas-wrap");
-    wrap.style.width = `${820 * scale}px`;
+    wrap.style.width = `${width * scale}px`;
     wrap.style.height = `${height * scale}px`;
     wrap.style.minHeight = "0";
     document.querySelector(".zoom-value").textContent = `${Math.round(scale * 100)}%`;
   }
 
+  function stepConnections(agent) {
+    const flow = currentFlow(), edges = flowEdges(flow), inputs = flow.workflow.filter(id => edges.some(edge => edge.to === agent.id && edge.from === id)).map(id => state.agents.find(item => item.id === id));
+    return html`<section class="step-connections"><h3>Step connections</h3><p class="meta">${inputs.length ? t`Wait for all: ${escape(inputs.map(item => item.name).join(", "))}` : t("Starts from the task brief.")}</p><fieldset><legend>Next agents</legend>${flow.workflow.filter(id => id !== agent.id).map(id => {
+      const target = state.agents.find(item => item.id === id), checked = edges.some(edge => edge.from === agent.id && edge.to === id), upstream = relatedSteps(flow, agent.id, "upstream").has(id);
+      return html`<label><input type="checkbox" data-flow-from="${escape(agent.id)}" data-flow-to="${escape(id)}" aria-label="${t`Next agent: ${escape(target.name)}`}" ${checked ? "checked" : ""} ${upstream ? "disabled" : ""}>${escape(target.name)}</label>`;
+    }).join("")}</fieldset><p class="meta">A join waits for every connected input and its human review. Use revision rules for a return path.</p></section>`;
+  }
+
+  function changeConnections(edges) {
+    const result = flowSchema.safeParse({ ...currentFlow(), edges });
+    if (!result.success) { toast(result.error.issues[0].message); return false; }
+    currentFlow().edges = result.data.edges; ui.linkFrom = null; ui.zoom = null; persist(); render(); toast("Connections saved for new tasks."); return true;
+  }
+
   function stepSettings(agent) {
     const index = currentFlow().workflow.indexOf(agent.id);
-    return html`<div class="step-settings">${flowRuleForm(agent)}<div class="step-order"><span class="field-label">Step order</span><strong>${index + 1} of ${currentFlow().workflow.length}</strong></div><div class="step-controls">${button("move-up", "Earlier", "up", "small", attrs`aria-label="Move step earlier"`, index === 0)}${button("move-down", "Later", "down", "small", attrs`aria-label="Move step later"`, index === currentFlow().workflow.length - 1)}</div><dl class="definition-list"><dt>Connection</dt><dd>${providerName(agent.provider)} / ${authName(agent.auth)}</dd><dt>Model</dt><dd>${escape(agent.model)}</dd><dt>Permissions</dt><dd>${t(permissionLevels[agent.permissionLevel || "ask"].label)}</dd>${agent.provider === "codex" ? html`<dt>Fast mode</dt><dd>${t({ default: "Follow Codex", on: "On", off: "Off" }[agent.codexFastMode || "default"])}</dd>` : ""}<dt>Skills</dt><dd>${agent.skillBindings.length} attached</dd></dl><p class="meta">Edit this agent's instructions, model, skills, and tools in the Agent library.</p>${button("edit-agent", "Edit in Agent library", "edit", "full", `data-id="${escape(agent.id)}"`)}<div class="step-remove">${button("remove-step", "Remove from flow", "trash", "text small")}<p class="meta">The agent stays in your library.</p></div></div>`;
+    return html`<div class="step-settings">${stepConnections(agent)}${flowRuleForm(agent)}<div class="step-order"><span class="field-label">${t(currentFlow().edges ? "Display order" : "Step order")}</span><strong>${index + 1} of ${currentFlow().workflow.length}</strong></div><div class="step-controls">${button("move-up", "Earlier", "up", "small", attrs`aria-label="Move step earlier"`, index === 0)}${button("move-down", "Later", "down", "small", attrs`aria-label="Move step later"`, index === currentFlow().workflow.length - 1)}</div><dl class="definition-list"><dt>Connection</dt><dd>${providerName(agent.provider)} / ${authName(agent.auth)}</dd><dt>Model</dt><dd>${escape(agent.model)}</dd><dt>Permissions</dt><dd>${t(permissionLevels[agent.permissionLevel || "ask"].label)}</dd>${agent.provider === "codex" ? html`<dt>Fast mode</dt><dd>${t({ default: "Follow Codex", on: "On", off: "Off" }[agent.codexFastMode || "default"])}</dd>` : ""}<dt>Skills</dt><dd>${agent.skillBindings.length} attached</dd></dl><p class="meta">Edit this agent's instructions, model, skills, and tools in the Agent library.</p>${button("edit-agent", "Edit in Agent library", "edit", "full", `data-id="${escape(agent.id)}"`)}<div class="step-remove">${button("remove-step", "Remove from flow", "trash", "text small")}<p class="meta">The agent stays in your library.</p></div></div>`;
   }
 
   function flowRuleForm(agent) {
     const flow = currentFlow(), rule = flow.rules?.find(item => item.after === agent.id) || { review: "auto" };
     const index = flow.workflow.indexOf(agent.id);
-    const choices = flow.workflow.slice(0, index + 1).map(id => state.agents.find(a => a.id === id));
+    const upstream = relatedSteps(flow, agent.id, "upstream");
+    const choices = [...flow.workflow.filter(id => upstream.has(id)), agent.id].map(id => state.agents.find(a => a.id === id));
     const options = (items, value) => items.map(item => html`<option value="${escape(item.id)}"${selected(value, item.id)}>${escape(item.name)}</option>`).join("");
     return html`<form id="flow-rule-form" class="flow-rule-form" data-form="flow-rule" data-id="${escape(agent.id)}"><h3>After this step</h3><p class="meta">Rules belong to this flow. Active tasks keep their saved version.</p>
       <div class="field"><label for="flow-review">Human checkpoint</label><select id="flow-review" name="review">${[["auto", "Continue automatically"], ["always", "Review before continuing"], ["on_issue", "Review if issues remain"]].map(([value, label]) => html`<option value="${value}"${selected(rule.review, value)}>${t(label)}</option>`).join("")}</select></div>
@@ -447,7 +477,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     const flow = currentFlow(), members = new Set([sourceId, ...(revisionGroups(flow).find(group => group.target === targetId)?.members || [])]);
     return html`<fieldset class="loop-members"><legend>Agents sharing this revision limit</legend>
       <p class="meta">Any selected agent can send work back. The whole group shares one limit.</p>
-      ${flow.workflow.slice(flow.workflow.indexOf(targetId) + 1).map(id => html`<label><input type="checkbox" name="loopMembers" value="${escape(id)}" ${members.has(id) ? "checked" : ""} ${id === sourceId ? "disabled" : ""}>${escape(state.agents.find(a => a.id === id)?.name)}</label>`).join("")}
+      ${flow.workflow.filter(id => relatedSteps(flow, targetId, "downstream").has(id)).map(id => html`<label><input type="checkbox" name="loopMembers" value="${escape(id)}" ${members.has(id) ? "checked" : ""} ${id === sourceId ? "disabled" : ""}>${escape(state.agents.find(a => a.id === id)?.name)}</label>`).join("")}
       <div class="loop-path" aria-live="polite"></div></fieldset>`;
   }
 
@@ -479,9 +509,10 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   }
 
   function changeFlowOrder(workflow, rules = currentFlow().rules || []) {
-    const result = flowSchema.safeParse({ ...currentFlow(), workflow, rules });
+    const edges = currentFlow().edges?.filter(edge => workflow.includes(edge.from) && workflow.includes(edge.to));
+    const result = flowSchema.safeParse({ ...currentFlow(), workflow, rules, edges });
     if (!result.success) { toast(t`${result.error.issues[0].message} Update the affected rules first.`); return false; }
-    currentFlow().workflow = workflow; currentFlow().rules = rules; return true;
+    currentFlow().workflow = workflow; currentFlow().rules = rules; if (edges) currentFlow().edges = edges; return true;
   }
 
   function editAgent(id, form = null) {
@@ -699,26 +730,29 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     return html`<section class="panel empty"><div class="empty-icon">${icon(iconName)}</div><h2>${title}</h2><p>${description}</p>${action}</section>`;
   }
 
+  function sessionSteps(run) { return [...run.steps, ...(run.merge?.sessions ?? [])]; }
+
   function sessionView(run) {
     if (!run) return emptyState("message", "Watch your team work", "Start a task. Each agent opens a fresh session, completes a step, and hands its outputs to the next agent.", button("run", "Run task", "play", "primary"));
-    ui.step = Math.min(Math.max(ui.step, 0), run.steps.length - 1);
+    ui.step = Math.min(Math.max(ui.step, 0), sessionSteps(run).length - 1);
     const viewed = sessionRun(run), step = sessionStep(viewed);
     const expanded = ui.expandedRunId === (run.parent?.runId || run.id);
     const isCurrent = engine.isActive(run) || run.id === state.run?.id;
     const controls = run.followup ? run.status === "needs_reconciliation" ? button("cancel", "Cancel", "stop", "danger") : button("stop-message", run.followup.stopRequested ? "Stopping reply" : "Stop reply", "stop", "", "", run.followup.stopRequested || run.status === "needs_reconciliation") : isCurrent ? (run.status === "running" ? button("pause", run.pauseRequested ? "Pause requested" : "Pause", "pause", "", "", run.pauseRequested) : run.status === "paused" && run.controlMode === "studio" ? button("resume", "Resume", "play", "primary") : "") + (["queued", "running", "paused", "waiting_approval", "waiting_review", "needs_reconciliation", "cancelling"].includes(run.status) ? button("cancel", run.status === "cancelling" ? "Cancelling" : "Cancel", run.status === "cancelling" ? "loader" : "stop", `danger${run.status === "cancelling" ? " is-busy" : ""}`, "", run.status === "cancelling") : button("run", "Run again", "play", "primary")) : button("live-session", "Latest run", "arrow");
-    const activeStep = run.steps.find(item => item.id === run.followup?.stepId) || run.steps[Math.min(run.index, run.steps.length - 1)];
+    const activeStep = sessionSteps(run).find(item => item.id === run.followup?.stepId) || run.merge?.sessions.find(item => ["running", "waiting_approval"].includes(item.status)) || run.steps.find(item => item.id === run.approval?.stepId) || run.steps.find(item => item.status === "running") || run.steps[Math.min(run.index, run.steps.length - 1)];
     const completed = run.steps.filter(item => item.status === "succeeded").length;
-    const nextAction = run.followup && run.status === "running" ? t`${escape(activeStep.agent.name)} is replying` : run.status === "waiting_review" ? (run.review.kind === "loop_limit" ? "Automatic revision limit reached" : run.review.kind === "scope_change" ? "A plan change needs your review" : "Your review is needed") : run.status === "queued" ? "Preparing the first agent" : run.status === "cancelling" ? "Stopping the active task" : run.status === "waiting_approval" ? t`${escape(activeStep.agent.name)} is waiting for you` : run.status === "running" ? t`${escape(activeStep.agent.name)} is working` : run.status === "succeeded" ? "Your team has finished. Review the outputs." : run.status === "paused" ? "Task paused. Resume when you are ready." : run.status === "failed" ? "This task needs attention" : run.status === "needs_reconciliation" ? "Review the interrupted session" : "Task cancelled. Your outputs are still here.";
-    const detail = run.followup && run.status === "running" ? t("Only this agent is replying. The workflow will stay at its current step.") : run.status === "waiting_review" ? t("Review the outputs below. The next agent has not started.") : run.status === "waiting_approval" ? escape(run.approval?.description || t("Review the pending permission request.")) : run.status === "running" && !run.pauseRequested ? t`Step ${Math.min(run.index + 1, run.steps.length)} of ${run.steps.length} / ${t(roleOutputs[activeStep.agent.role])}` : run.status === "succeeded" && run.artifacts.some(item => item.stale && !item.superseded) ? escape(t(run.note)) : run.status === "succeeded" ? t`${run.artifacts.length} outputs, with the conversations that produced them.` : escape(run.note);
+    const running = run.steps.filter(item => ["running", "waiting_approval"].includes(item.status));
+    const nextAction = run.merge && ["resolving", "checking"].includes(run.merge.status) ? "Agents are agreeing on the merge" : run.flow.edges && run.status === "running" && running.length > 1 ? t`${running.length} agents are working` : run.followup && run.status === "running" ? t`${escape(activeStep.agent.name)} is replying` : run.status === "waiting_review" ? (run.review.kind === "loop_limit" ? "Automatic revision limit reached" : run.review.kind === "scope_change" ? "A plan change needs your review" : "Your review is needed") : run.status === "queued" ? "Preparing the first agent" : run.status === "cancelling" ? "Stopping the active task" : run.status === "waiting_approval" ? t`${escape(activeStep.agent.name)} is waiting for you` : run.status === "running" ? t`${escape(activeStep.agent.name)} is working` : run.status === "succeeded" ? "Your team has finished. Review the outputs." : run.status === "paused" ? "Task paused. Resume when you are ready." : run.status === "failed" ? "This task needs attention" : run.status === "needs_reconciliation" ? "Review the interrupted session" : "Task cancelled. Your outputs are still here.";
+    const detail = run.merge && ["resolving", "checking"].includes(run.merge.status) ? t`Merge round ${run.merge.round} / ${run.merge.votes.filter(vote => vote.decision === "pass").length} of ${run.merge.contributors.length} contributors agreed` : run.followup && run.status === "running" ? t("Only this agent is replying. The workflow will stay at its current step.") : run.status === "waiting_review" ? t("Review the outputs below. The next agent has not started.") : run.status === "waiting_approval" ? escape(run.approval?.description || t("Review the pending permission request.")) : run.status === "running" && !run.pauseRequested ? (run.flow.edges ? t`Working: ${escape(running.map(item => item.agent.name).join(", "))}` : t`Step ${Math.min(run.index + 1, run.steps.length)} of ${run.steps.length} / ${t(roleOutputs[activeStep.agent.role])}`) : run.status === "succeeded" && run.artifacts.some(item => item.stale && !item.superseded) ? escape(t(run.note)) : run.status === "succeeded" ? t`${run.artifacts.length} outputs, with the conversations that produced them.` : escape(run.note);
     const approvalActions = isCurrent && run.status === "waiting_review" ? button("review-open", "Review outputs", "file", "primary") + controls : isCurrent && run.status === "needs_reconciliation" ? button("reconcile", "Check provider state", "activity", "primary") + controls : isCurrent && run.status === "waiting_approval" ? button("approve", "Approve request", "check", "primary") + (run.followup ? controls : button("cancel", "Reject & cancel", "close", "text")) : controls;
     const followControl = isCurrent && engine.isActive(run) ? (ui.followRun ? html`<span class="badge">Following live</span>` : button("follow-run", "Follow live", "activity", "small")) : html`<span class="badge gray">Session ${ui.step + 1}</span>`;
     const mood = item => item.status === "running" ? "running" : item.status === "waiting_approval" ? "waiting" : "";
     const actionMark = ["queued", "cancelling"].includes(run.status) ? icon("loader", "spinning") : ["running", "waiting_approval", "paused"].includes(run.status) ? agentIcon(activeStep.agent, true, mood(activeStep)) : icon(run.status === "succeeded" ? "check" : run.status === "failed" ? "alert" : "activity");
-    return html`<section class="next-action ${["waiting_approval", "waiting_review"].includes(run.status) ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${t(nextAction)}</h2><p>${detail}</p>${run.approval ? html`<pre class="approval-details">${escape(run.approval.details)}</pre>` : ""}</div><div class="actions">${approvalActions}</div></section>
+    return html`<section class="next-action ${["waiting_approval", "waiting_review"].includes(run.status) ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${t(nextAction)}</h2><p>${detail}</p>${run.approval ? html`<pre class="approval-details">${escape(run.approval.details)}</pre>${run.approvals?.length > 1 ? html`<p class="meta">${t`${run.approvals.length} permission requests pending`}</p>` : ""}` : ""}</div><div class="actions">${approvalActions}</div></section>
       <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Flow v${run.flow.revision || 1}${run.lockedPlan ? t` / Approved plan v${run.lockedPlan.version}` : ""}${revisionGroups(run.flow).filter(group => run.loopCounts?.[group.key]).map(group => t` / ${escape(run.steps.find(s => s.agent.id === group.target)?.agent.name)} revisions ${run.loopCounts[group.key]}/${group.maxCycles}`).join("")}</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => html`<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
       <div class="run-view-toolbar"><div class="segment run-view-switch" role="group" aria-label="Task view">${[["details", "Detail view", "message"], ["map", "Agent view", "agents"]].map(([layout, label, symbol]) => html`<button type="button" class="${ui.runLayout === layout ? "active" : ""}" data-action="run-layout" data-layout="${layout}" aria-pressed="${ui.runLayout === layout}">${icon(symbol)}${t(label)}</button>`).join("")}</div></div>
       ${revisionBanner(run)}
-      ${ui.runLayout === "map" ? runMapView(run) + run.steps.map(item => childSessions(run, item)).join("") : html`<section class="panel run-grid${expanded ? " expanded-workspace" : ""}"${expanded ? ` style="--session-split:${ui.focusSplit}%" data-pane="${ui.focusPane}"` : ""}>${expanded ? focusHeader(run) : ""}<aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step && !ui.childRunId ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step && !ui.childRunId}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>${childSessions(run, item)}`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2 tabindex="-1">${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, viewed)}${viewed.parent ? "" : followControl}${expanded ? "" : button("session-fullscreen", "Full screen", "fit", "small")}</div></div>${childBanner(viewed)}<nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ...(run.revisionHistory?.length ? [["revisions", "Revisions"]] : []), ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, viewed) : ui.sessionTab === "revisions" ? revisionsView(run) : ui.sessionTab === "terminal" ? terminalView(step, viewed) : ui.sessionTab === "handoff" ? handoffView(step, viewed) : messagesView(step)}</div>${expanded && run.review?.stepId === step.id && run.status === "waiting_review" && ["conversation", "review"].includes(ui.sessionTab) ? html`<div class="focus-review">${reviewControls(run, run.review)}</div>` : ui.sessionTab === "conversation" ? messageComposer(viewed, step) : ""}<div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${expanded ? html`<div class="session-divider" role="separator" aria-label="Resize conversation and document panels" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65" aria-valuenow="${ui.focusSplit}" tabindex="0"></div>` : ""}${evidenceView(viewed)}</section>`}`;
+      ${ui.runLayout === "map" ? runMapView(run) + run.steps.map(item => childSessions(run, item)).join("") : html`<section class="panel run-grid${expanded ? " expanded-workspace" : ""}"${expanded ? ` style="--session-split:${ui.focusSplit}%" data-pane="${ui.focusPane}"` : ""}>${expanded ? focusHeader(run) : ""}<aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${sessionSteps(run).map((item, index) => html`<button class="run-step ${index === ui.step && !ui.childRunId ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="${item.purpose === "merge" ? t`View ${escape(item.agent.name)} merge session` : t`View ${escape(item.agent.name)} session`}" aria-pressed="${index === ui.step && !ui.childRunId}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.purpose === "merge" ? t(" / Merge discussion") : item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>${childSessions(run, item)}`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2 tabindex="-1">${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, viewed)}${viewed.parent ? "" : followControl}${expanded ? "" : button("session-fullscreen", "Full screen", "fit", "small")}</div></div>${childBanner(viewed)}<nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ...(run.revisionHistory?.length ? [["revisions", "Revisions"]] : []), ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, viewed) : ui.sessionTab === "revisions" ? revisionsView(run) : ui.sessionTab === "terminal" ? terminalView(step, viewed) : ui.sessionTab === "handoff" ? handoffView(step, viewed) : messagesView(step)}</div>${expanded && run.review?.stepId === step.id && run.status === "waiting_review" && ["conversation", "review"].includes(ui.sessionTab) ? html`<div class="focus-review">${reviewControls(run, run.review)}</div>` : ui.sessionTab === "conversation" ? messageComposer(viewed, step) : ""}<div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${expanded ? html`<div class="session-divider" role="separator" aria-label="Resize conversation and document panels" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65" aria-valuenow="${ui.focusSplit}" tabindex="0"></div>` : ""}${evidenceView(viewed)}</section>`}`;
   }
 
   function runMapView(run) {
@@ -777,7 +811,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     const pending = engine.isActive(run) && run.status === "waiting_review" && !!run.review;
     const outputs = review.artifactIds.map(id => run.artifacts.find(a => a.id === id)).filter(Boolean);
     const planning = step?.agent.role === "planner" && review.lockOutputs;
-    return html`<div class="review-workspace"><div class="review-heading"><h3>${review.kind === "scope_change" ? t("Review the requested scope change") : review.kind === "loop_limit" ? t("Choose the next revision") : planning ? t("Review the plan together") : t("Review this handoff")}</h3><span class="badge ${pending ? "amber" : "gray"}">${pending ? t`Draft ${step?.attempt || 1}` : review.action === "approved" ? t("Approved") : t("Revision requested")}</span></div><div class="review-summary">${renderMarkdown(review.summary)}</div>${pending && planning ? html`<p class="guide-note">Ask questions or request changes below. Planner will return a new draft. Coder stays queued until you lock the plan and continue.</p>` : ""}
+    return html`<div class="review-workspace">${run.pendingReviews?.length ? html`<p class="meta">${t`${run.pendingReviews.length + 1} handoffs need review`}</p>` : ""}<div class="review-heading"><h3>${review.kind === "scope_change" ? t("Review the requested scope change") : review.kind === "loop_limit" ? t("Choose the next revision") : planning ? t("Review the plan together") : t("Review this handoff")}</h3><span class="badge ${pending ? "amber" : "gray"}">${pending ? t`Draft ${step?.attempt || 1}` : review.action === "approved" ? t("Approved") : t("Revision requested")}</span></div><div class="review-summary">${renderMarkdown(review.summary)}</div>${pending && planning ? html`<p class="guide-note">Ask questions or request changes below. Planner will return a new draft. Coder stays queued until you lock the plan and continue.</p>` : ""}
       ${outputs.map(artifact => {
         if (ui.expandedRunId) return artifactRow(artifact);
         const before = previous && run.artifacts.find(a => a.stepId === previous.id && a.name === artifact.name);
@@ -851,15 +885,16 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
 
   function messageComposer(run, step) {
     const key = `${run.id}:${step.id}`, sending = ui.sendingMessages.has(key);
+    const session = run.flow.edges ? step : run;
     const replying = run.followup?.stepId === step.id;
-    const working = ["running", "waiting_approval"].includes(run.status) && (run.followup?.stepId || run.steps[run.index]?.id) === step.id && run.controlMode === "studio";
-    const live = working && run.acceptingMessages && !run.followup?.stopRequested;
+    const working = ["running", "waiting_approval"].includes(run.status) && (run.flow.edges ? ["running", "waiting_approval"].includes(step.status) : (run.followup?.stepId || run.steps[run.index]?.id) === step.id) && run.controlMode === "studio";
+    const live = working && session.acceptingMessages && !run.followup?.stopRequested;
     const idle = !run.parent && step.providerThreadId && step.status !== "queued" && ["succeeded", "failed", "cancelled", "paused", "waiting_review"].includes(run.status) && run.controlMode === "studio" && !run.approval && !run.followup && !run.steps.some(item => item.activeTurnId);
     const mode = ui.messageModes[key] || "queue", pending = (run.pendingMessages || []).filter(item => item.stepId === step.id);
-    const disabled = sending || !(live || idle) || (live && mode === "interrupt" && run.interruptRequested) || pending.length >= 20;
-    const hint = run.parent && !working ? "Review this result with the parent agent." : run.status === "needs_reconciliation" ? "Check provider state before continuing this conversation." : working ? run.interruptRequested ? "Stopping the current turn and its tools. Your instruction will run next." : mode === "interrupt" ? "Stop this turn, then apply your instruction. Existing file changes are preserved." : replying ? "Finish this turn, then answer queued messages. Other agents will not run automatically." : "Finish this turn, then process queued instructions in order before handing off." : !step.providerThreadId || step.status === "queued" ? "This agent can receive messages after its session starts." : !idle && !replying ? "Wait for the current turn to finish or pause the workflow to send a message." : "Uses this agent's saved permissions. Other agents will not run automatically.";
-    const queue = pending.length ? html`<div class="message-queue" role="region" aria-label="Queued instructions"><div class="message-queue-heading">${t("Queued instructions")} <span class="badge gray">${pending.length}</span></div><ol>${pending.map(item => html`<li><span>${item.mode === "interrupt" ? html`<strong>${t("Adjust current work")}</strong> ` : ""}${escape(item.message)}</span>${button("remove-message", "", "close", "icon-btn", `data-id="${item.id}" aria-label="${t("Remove queued instruction")}" title="${t("Remove queued instruction")}"`, item.mode === "interrupt" && run.interruptRequested)}</li>`).join("")}</ol></div>` : "";
-    return html`<form class="session-composer" data-form="session-message" data-id="${key}">${queue}${run.activeMessage?.stepId === step.id ? html`<p class="meta command-active">${icon("activity")}${t("Working on your instruction")}</p>` : ""}<label for="session-message">Message ${escape(step.agent.name)}</label><textarea id="session-message" data-id="${key}" name="message" rows="2" maxlength="8000" placeholder="Ask a question or describe the next change..." aria-describedby="session-message-hint" required>${escape(ui.messageDrafts[key] || "")}</textarea><p id="session-message-hint" class="meta" role="status">${t(hint)}</p><div class="composer-actions">${working ? html`<select id="message-mode" data-id="${key}" aria-label="Instruction timing"><option value="queue" ${mode === "queue" ? "selected" : ""}>${t("Add to queue")}</option><option value="interrupt" ${mode === "interrupt" ? "selected" : ""}>${t("Adjust current work")}</option></select>` : html`<span class="meta">Ctrl / ⌘ + Enter to send</span>`}${replying ? button("stop-message", run.followup.stopRequested ? "Stopping reply" : "Stop reply", "stop", "small", "", run.followup.stopRequested || run.status === "needs_reconciliation") : ""}<button type="submit" class="btn primary small" ${disabled ? "disabled" : ""}>${icon(sending ? "loader" : "arrow")}${t(sending ? "Sending message" : working ? mode === "interrupt" ? "Adjust current work" : "Add to queue" : "Send message")}</button></div></form>`;
+    const disabled = sending || !(live || idle) || (live && mode === "interrupt" && session.interruptRequested) || pending.length >= 20;
+    const hint = run.parent && !working ? "Review this result with the parent agent." : run.status === "needs_reconciliation" ? "Check provider state before continuing this conversation." : working ? session.interruptRequested ? "Stopping the current turn and its tools. Your instruction will run next." : mode === "interrupt" ? "Stop this turn, then apply your instruction. Existing file changes are preserved." : replying ? "Finish this turn, then answer queued messages. Other agents will not run automatically." : "Finish this turn, then process queued instructions in order before handing off." : !step.providerThreadId || step.status === "queued" ? "This agent can receive messages after its session starts." : !idle && !replying ? "Wait for the current turn to finish or pause the workflow to send a message." : "Uses this agent's saved permissions. Other agents will not run automatically.";
+    const queue = pending.length ? html`<div class="message-queue" role="region" aria-label="Queued instructions"><div class="message-queue-heading">${t("Queued instructions")} <span class="badge gray">${pending.length}</span></div><ol>${pending.map(item => html`<li><span>${item.mode === "interrupt" ? html`<strong>${t("Adjust current work")}</strong> ` : ""}${escape(item.message)}</span>${button("remove-message", "", "close", "icon-btn", `data-id="${item.id}" aria-label="${t("Remove queued instruction")}" title="${t("Remove queued instruction")}"`, item.mode === "interrupt" && session.interruptRequested)}</li>`).join("")}</ol></div>` : "";
+    return html`<form class="session-composer" data-form="session-message" data-id="${key}">${queue}${session.activeMessage?.stepId === step.id ? html`<p class="meta command-active">${icon("activity")}${t("Working on your instruction")}</p>` : ""}<label for="session-message">Message ${escape(step.agent.name)}</label><textarea id="session-message" data-id="${key}" name="message" rows="2" maxlength="8000" placeholder="Ask a question or describe the next change..." aria-describedby="session-message-hint" required>${escape(ui.messageDrafts[key] || "")}</textarea><p id="session-message-hint" class="meta" role="status">${t(hint)}</p><div class="composer-actions">${working ? html`<select id="message-mode" data-id="${key}" aria-label="Instruction timing"><option value="queue" ${mode === "queue" ? "selected" : ""}>${t("Add to queue")}</option><option value="interrupt" ${mode === "interrupt" ? "selected" : ""}>${t("Adjust current work")}</option></select>` : html`<span class="meta">Ctrl / ⌘ + Enter to send</span>`}${replying ? button("stop-message", run.followup.stopRequested ? "Stopping reply" : "Stop reply", "stop", "small", "", run.followup.stopRequested || run.status === "needs_reconciliation") : ""}<button type="submit" class="btn primary small" ${disabled ? "disabled" : ""}>${icon(sending ? "loader" : "arrow")}${t(sending ? "Sending message" : working ? mode === "interrupt" ? "Adjust current work" : "Add to queue" : "Send message")}</button></div></form>`;
   }
 
   async function sendConversation(run, step, value, fromReview = false) {
@@ -868,7 +903,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     ui.sendingMessages.add(key); ui.followRun = false;
     render(true);
     try {
-      await engine.message(step.id, text, run, run.acceptingMessages ? ui.messageModes[key] || "queue" : undefined);
+      await engine.message(step.id, text, run, (run.flow.edges ? step.acceptingMessages : run.acceptingMessages) ? ui.messageModes[key] || "queue" : undefined);
       if (fromReview && (ui.reviewDraft || "").trim() === text && ui.reviewId === run.review?.id) {
         ui.reviewDraft = "";
         const input = document.getElementById("review-feedback");
@@ -912,7 +947,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
 
   function handoffView(step, run) {
     const outputs = run.artifacts.filter(artifact => artifact.stepId === step.id);
-    return html`<div class="handoff-card"><h3>A small handoff, with the full evidence nearby.</h3><p><strong>Goal:</strong></p>${renderMarkdown(run.brief)}<p><strong>Context:</strong> a new session, not the previous conversation.<br><strong>Inputs:</strong> ${step.receivedArtifacts.length ? step.receivedArtifacts.map(item => escape(item.name)).join(", ") : t("The task brief and project rules.")}<br><strong>Code reference:</strong> ${escape(step.codeReference || t("Pending"))}<br><strong>Studio session:</strong> ${escape(step.sessionId)}<br><strong>Provider thread:</strong> ${escape(step.providerThreadId || t("Not started"))}<br><strong>Permissions:</strong> ${t(permissionLevels[step.agent.permissionLevel || "ask"].label)}<br>${step.agent.provider === "codex" ? html`<strong>Fast mode:</strong> ${t({ default: "Follow Codex", on: "On", off: "Off" }[step.agent.codexFastMode || "default"])}${step.actualServiceTier ? t` (runtime tier: ${escape(step.actualServiceTier)})` : ""}<br>` : ""}</p><p><strong>Instructions snapshot:</strong></p>${renderMarkdown(step.agent.prompt)}</div><div class="snapshot-list"><h3>Skill versions for this run</h3>${(step.agent.skillSnapshots || []).map(binding => html`<button class="snapshot-row" data-action="skill-snapshot" data-id="${escape(binding.id)}">${icon("file")}<span><strong>${escape(binding.name)}</strong><small>${escape(binding.version.slice(0, 12))} / ${binding.fileCount} ${binding.fileCount === 1 ? t("file") : t("files")}</small></span>${icon("chevron")}</button>`).join("") || html`<p class="meta">No skills attached when this run started.</p>`}</div><div style="margin-top:20px"><p class="eyebrow" style="margin-bottom:12px">Outputs from this step</p>${outputs.length ? html`<div class="artifact-list">${outputs.map(artifactRow).join("")}</div>` : html`<p class="meta">Artifacts appear after this step completes.</p>`}</div>`;
+    return html`<div class="handoff-card"><h3>A small handoff, with the full evidence nearby.</h3><p><strong>Goal:</strong></p>${renderMarkdown(run.brief)}<p><strong>Context:</strong> a new session, not the previous conversation.<br><strong>Inputs:</strong> ${step.receivedArtifacts.length ? step.receivedArtifacts.map(item => escape(item.name)).join(", ") : t("The task brief and project rules.")}<br><strong>Code reference:</strong> ${escape(step.codeReference || t("Pending"))}<br><strong>Studio session:</strong> ${escape(step.sessionId)}<br><strong>Provider thread:</strong> ${escape(step.providerThreadId || t("Not started"))}<br><strong>Permissions:</strong> ${t(permissionLevels[step.agent.permissionLevel || "ask"].label)}<br>${step.agent.provider === "codex" ? html`<strong>Fast mode:</strong> ${t({ default: "Follow Codex", on: "On", off: "Off" }[step.agent.codexFastMode || "default"])}${step.actualServiceTier ? t` (runtime tier: ${escape(step.actualServiceTier)})` : ""}<br>` : ""}${step.workspace ? html`<strong>Branch folder:</strong> ${escape(step.workspace)}<br>` : ""}</p><p><strong>Instructions snapshot:</strong></p>${renderMarkdown(step.agent.prompt)}</div><div class="snapshot-list"><h3>Skill versions for this run</h3>${(step.agent.skillSnapshots || []).map(binding => html`<button class="snapshot-row" data-action="skill-snapshot" data-id="${escape(binding.id)}">${icon("file")}<span><strong>${escape(binding.name)}</strong><small>${escape(binding.version.slice(0, 12))} / ${binding.fileCount} ${binding.fileCount === 1 ? t("file") : t("files")}</small></span>${icon("chevron")}</button>`).join("") || html`<p class="meta">No skills attached when this run started.</p>`}</div><div style="margin-top:20px"><p class="eyebrow" style="margin-bottom:12px">Outputs from this step</p>${outputs.length ? html`<div class="artifact-list">${outputs.map(artifactRow).join("")}</div>` : html`<p class="meta">Artifacts appear after this step completes.</p>`}</div>`;
   }
 
   function artifactRow(artifact) {
@@ -937,7 +972,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     ui.focusPane = "conversation";
     ui.openArtifacts = ui.openArtifacts.filter(id => focusedDocument(run, id));
     ui.fileBrowserActive = false;
-    const artifact = focusedDocument(run, ui.artifactId) || run.artifacts.find(a => a.id === run.review?.artifactIds[0]) || run.artifacts.find(a => a.stepId === run.steps[ui.step]?.id && !a.superseded && !a.stale) || run.artifacts.find(a => !a.superseded && !a.stale);
+    const artifact = focusedDocument(run, ui.artifactId) || run.artifacts.find(a => a.id === run.review?.artifactIds[0]) || run.artifacts.find(a => a.stepId === sessionSteps(run)[ui.step]?.id && !a.superseded && !a.stale) || run.artifacts.find(a => !a.superseded && !a.stale);
     ui.artifactId = artifact?.id || null;
     if (artifact && !ui.openArtifacts.includes(artifact.id)) ui.openArtifacts.push(artifact.id);
     render(true);
@@ -972,21 +1007,22 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     ui.fileBrowser = { runId: run.id, path, parent: path === "." ? null : ".", entries: [] };
     render(true);
     try {
-      const result = await request("/api/runs/files", { id: run.id, path });
+      const result = await request("/api/runs/files", { id: run.id, path, ...(run.flow.edges ? { stepId: sessionSteps(run)[ui.step]?.id } : {}) });
       if (requestId === ui.fileRequest && ui.expandedRunId === (run.parent?.runId || run.id)) ui.fileBrowser = { ...result, runId: run.id };
     } catch (error) { if (requestId === ui.fileRequest) ui.fileError = error.message; }
     finally { if (requestId === ui.fileRequest) { ui.fileLoading = false; render(true); } }
   }
 
-  async function openProjectFile(path) {
+  async function openProjectFile(path, sourceStepId) {
     const run = sessionRun(); if (!run) return;
+    sourceStepId ||= sessionSteps(run)[ui.step]?.id;
     const requestId = ++ui.fileRequest;
     ui.fileLoading = true; ui.fileError = ""; render(true);
     try {
-      const file = await request("/api/runs/file", { id: run.id, path });
+      const file = await request("/api/runs/file", { id: run.id, path, ...(run.flow.edges ? { stepId: sourceStepId } : {}) });
       if (requestId !== ui.fileRequest || ui.expandedRunId !== (run.parent?.runId || run.id)) return;
-      const id = `source:${run.id}:${encodeURIComponent(file.path)}`;
-      const document = { id, runId: run.id, sourcePath: file.path, name: file.path, content: file.content, type: "Current file", agent: run.project.name, loadedAt: Date.now() };
+      const id = `source:${run.id}:${sourceStepId || "project"}:${encodeURIComponent(file.path)}`;
+      const document = { id, runId: run.id, sourcePath: file.path, sourceStepId, name: file.path, content: file.content, type: "Current file", agent: run.flow.edges ? sessionSteps(run)[ui.step]?.agent.name : run.project.name, loadedAt: Date.now() };
       ui.sourceDocuments = [...ui.sourceDocuments.filter(item => item.id !== id), document];
       openArtifact(id);
       app.querySelector(".focus-file-tab[aria-selected=true]")?.focus({ preventScroll: true });
@@ -1003,7 +1039,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     const artifact = ui.fileBrowserActive ? null : focusedDocument(run, ui.artifactId);
     const tabs = ui.openArtifacts.map(id => focusedDocument(run, id)).filter(Boolean);
     const markdown = artifact && isMarkdown(artifact);
-    return html`<aside class="evidence-panel focused-evidence" aria-label="Task outputs"><div class="focus-files-bar">${button("all-outputs", "Outputs", "folder", "small focus-output-list", `aria-pressed="${!artifact && !ui.fileBrowserActive}"`)}${button("project-files", "Project files", "code", "small focus-output-list", `aria-pressed="${ui.fileBrowserActive}"`)}<div class="focus-files" role="tablist" aria-label="Open documents">${tabs.map(item => html`<div class="focus-file${item.id === artifact?.id ? " active" : ""}"><button class="focus-file-tab" role="tab" id="file-tab-${escape(item.id)}" aria-controls="focus-document" aria-selected="${item.id === artifact?.id}" tabindex="${item.id === artifact?.id || (!artifact && item === tabs[0]) ? 0 : -1}" data-action="artifact" data-id="${escape(item.id)}" title="${escape(item.name)}" aria-label="${escape(item.name)}">${icon(item.sourcePath || item.type === "Code diff" ? "code" : "file")}${escape(item.sourcePath ? item.name.split(/[\\/]/).at(-1) : item.name)}</button>${button("close-artifact", "", "close", "text icon-only", attrs`data-id="${escape(item.id)}" aria-label="Close ${escape(item.name)}"`)}</div>`).join("")}</div></div>${ui.fileLoading ? html`<p class="focus-file-status" role="status">Loading project files...</p>` : ""}${ui.fileError ? html`<p class="focus-file-status" role="alert">${escape(t(ui.fileError))}</p>` : ""}${ui.fileBrowserActive ? projectFilesView(run) : artifact ? html`<div class="focus-document-toolbar"><div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${artifact.superseded ? t("Previous attempt") : escape(t(artifact.type))}</p></div><div class="focus-document-actions">${markdown ? html`<div class="segment" role="group" aria-label="Document format">${[["preview", "Preview"], ["source", "Markdown source"]].map(([format, label]) => html`<button data-action="focus-format" data-format="${format}" class="${ui.artifactFormat === format ? "active" : ""}" aria-pressed="${ui.artifactFormat === format}">${t(label)}</button>`).join("")}</div>` : ""}${artifact.sourcePath ? button("project-file", "", "reset", "text icon-only", attrs`data-path="${escape(artifact.sourcePath)}" aria-label="Reload current file"`) : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div></div><div id="focus-document" class="evidence-body focus-document-content" data-id="${escape(run.id)}:${escape(artifact.id)}:${ui.artifactFormat}:${artifact.loadedAt || ""}" role="tabpanel" aria-labelledby="file-tab-${escape(artifact.id)}" tabindex="0">${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : (markdown && ui.artifactFormat !== "source") || artifact.type === "Revision findings" ? artifactPreview(artifact) : sourcePreview(artifact)}</div>` : html`<div class="evidence-body">${revisionEvidence(run)}<h3>Outputs</h3><p class="meta">Choose a document to read alongside the conversation.</p>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output">${icon("file")}<span>Waiting for the first output<small>Outputs appear here when an agent produces them.</small></span></div>`}</div>`}</aside>`;
+    return html`<aside class="evidence-panel focused-evidence" aria-label="Task outputs"><div class="focus-files-bar">${button("all-outputs", "Outputs", "folder", "small focus-output-list", `aria-pressed="${!artifact && !ui.fileBrowserActive}"`)}${button("project-files", "Project files", "code", "small focus-output-list", `aria-pressed="${ui.fileBrowserActive}"`)}<div class="focus-files" role="tablist" aria-label="Open documents">${tabs.map(item => html`<div class="focus-file${item.id === artifact?.id ? " active" : ""}"><button class="focus-file-tab" role="tab" id="file-tab-${escape(item.id)}" aria-controls="focus-document" aria-selected="${item.id === artifact?.id}" tabindex="${item.id === artifact?.id || (!artifact && item === tabs[0]) ? 0 : -1}" data-action="artifact" data-id="${escape(item.id)}" title="${escape(item.name)}" aria-label="${escape(item.name)}">${icon(item.sourcePath || item.type === "Code diff" ? "code" : "file")}${escape(item.sourcePath ? item.name.split(/[\\/]/).at(-1) : item.name)}</button>${button("close-artifact", "", "close", "text icon-only", attrs`data-id="${escape(item.id)}" aria-label="Close ${escape(item.name)}"`)}</div>`).join("")}</div></div>${ui.fileLoading ? html`<p class="focus-file-status" role="status">Loading project files...</p>` : ""}${ui.fileError ? html`<p class="focus-file-status" role="alert">${escape(t(ui.fileError))}</p>` : ""}${ui.fileBrowserActive ? projectFilesView(run) : artifact ? html`<div class="focus-document-toolbar"><div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${artifact.superseded ? t("Previous attempt") : escape(t(artifact.type))}</p></div><div class="focus-document-actions">${markdown ? html`<div class="segment" role="group" aria-label="Document format">${[["preview", "Preview"], ["source", "Markdown source"]].map(([format, label]) => html`<button data-action="focus-format" data-format="${format}" class="${ui.artifactFormat === format ? "active" : ""}" aria-pressed="${ui.artifactFormat === format}">${t(label)}</button>`).join("")}</div>` : ""}${artifact.sourcePath ? button("project-file", "", "reset", "text icon-only", attrs`data-path="${escape(artifact.sourcePath)}" data-step-id="${escape(artifact.sourceStepId || "")}" aria-label="Reload current file"`) : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div></div><div id="focus-document" class="evidence-body focus-document-content" data-id="${escape(run.id)}:${escape(artifact.id)}:${ui.artifactFormat}:${artifact.loadedAt || ""}" role="tabpanel" aria-labelledby="file-tab-${escape(artifact.id)}" tabindex="0">${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : (markdown && ui.artifactFormat !== "source") || artifact.type === "Revision findings" ? artifactPreview(artifact) : sourcePreview(artifact)}</div>` : html`<div class="evidence-body">${revisionEvidence(run)}<h3>Outputs</h3><p class="meta">Choose a document to read alongside the conversation.</p>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output">${icon("file")}<span>Waiting for the first output<small>Outputs appear here when an agent produces them.</small></span></div>`}</div>`}</aside>`;
   }
 
   function sourcePreview(artifact) {
@@ -1144,7 +1180,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     }
     let flow;
     if (mode === "rename") { source.name = name; flow = source; }
-    else { flow = { id: crypto.randomUUID(), name, workflow: mode === "duplicate" ? [...source.workflow] : [], rules: mode === "duplicate" ? structuredClone(source.rules || []) : [], revision: 1, archived: false }; state.flows.push(flow); }
+    else { flow = { id: crypto.randomUUID(), name, workflow: mode === "duplicate" ? [...source.workflow] : [], rules: mode === "duplicate" ? structuredClone(source.rules || []) : [], ...(mode === "duplicate" && source.edges ? { edges: structuredClone(source.edges), maxParallel: source.maxParallel } : {}), revision: 1, archived: false }; state.flows.push(flow); }
     selectFlow(flow.id);
   }
 
@@ -1414,7 +1450,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     else if (action === "close-inspector") { ui.selected = null; render(); }
     else if (action === "all-outputs") { ui.fileRequest++; ui.fileBrowserActive = false; ui.fileLoading = false; ui.fileError = ""; ui.artifactId = null; ui.focusPane = "document"; render(true); }
     else if (action === "project-files") await loadProjectFiles(target.dataset.path);
-    else if (action === "project-file") await openProjectFile(target.dataset.path);
+    else if (action === "project-file") await openProjectFile(target.dataset.path, target.dataset.stepId);
     else if (action === "session-fullscreen") toggleSessionFullscreen();
     else if (action === "focus-pane") { ui.focusPane = target.dataset.pane; render(true); }
     else if (action === "focus-format") { ui.artifactFormat = target.dataset.format; render(true); app.querySelector(".focus-document-content")?.scrollTo(0, 0); }
@@ -1464,7 +1500,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       const planner = crew.find(a => a.role === "planner"), coder = crew.find(a => a.role === "coder"), final = crew.at(-1);
       const rules = [];
       if (planner) rules.push({ after: planner.id, review: "always", lockOutputs: true, returnTo: planner.id });
-      if (coder) for (const agent of crew.slice(crew.indexOf(coder) + 1)) if (["reviewer", "backend", "frontend"].includes(agent.role)) rules.push({ after: agent.id, review: "auto", lockOutputs: false, loop: { target: coder.id, maxCycles: 3, onLimit: "review" } });
+      if (coder) for (const agent of crew.filter(agent => relatedSteps(flow, agent.id, "upstream").has(coder.id))) if (["reviewer", "backend", "frontend"].includes(agent.role)) rules.push({ after: agent.id, review: "auto", lockOutputs: false, loop: { target: coder.id, maxCycles: 3, onLimit: "review" } });
       if (final) {
         const finalRule = rules.find(rule => rule.after === final.id);
         if (finalRule) finalRule.review = "always";
@@ -1489,7 +1525,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     else if (action === "child-approve") await engine.approve(sessionRun());
     else if (action === "child-cancel") await engine.cancel(sessionRun());
     else if (action === "child-session") { ui.childRunId = id; ui.runLayout = "details"; ui.followRun = false; ui.sessionTab = "conversation"; ui.artifactId = null; ui.fileRequest++; ui.fileLoading = false; render(); }
-    else if (action === "run-step") { ui.childRunId = null; ui.step = Number(target.dataset.index); ui.artifactId = null; ui.followRun = false; render(); }
+    else if (action === "run-step") { ui.childRunId = null; ui.step = Number(target.dataset.index); ui.artifactId = null; ui.followRun = false; ui.fileRequest++; ui.fileBrowserActive = false; render(); }
     else if (action === "session-tab") { ui.sessionTab = target.dataset.tab; render(); }
     else if (action === "choose-skills") skillPicker(target.closest("form"));
     else if (action === "back-skills") skillPicker();
@@ -1556,23 +1592,10 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       ui.selected = null;
       ui.linkFrom = null; persist(); render(); toast("Step removed. Its preset is still in your agent library.");
     }
-    else if (action === "connect-from") { ui.linkFrom = id; render(); toast("Choose a later input port to preview the new order."); }
+    else if (action === "connect-from") { ui.linkFrom = id; render(); toast("Choose an input port to add a connection."); }
     else if (action === "connect-to") {
       if (!ui.linkFrom) return toast("Select an output port first.");
-      const from = currentFlow().workflow.indexOf(ui.linkFrom);
-      const to = currentFlow().workflow.indexOf(id);
-      if (to <= from) { toast("Use Automatic revisions in step settings to create a bounded loop."); return; }
-      if (to === from + 1) { ui.linkFrom = null; render(); return toast("These agents are already connected in this order."); }
-      ui.pendingOrder = [...currentFlow().workflow];
-      ui.pendingOrder.splice(to, 1); ui.pendingOrder.splice(from + 1, 0, id);
-      ui.linkFrom = null;
-      render();
-      showModal(t("Review the new order"), html`<p>This places <strong>${escape(state.agents.find(agent => agent.id === id).name)}</strong> directly after <strong>${escape(state.agents.find(agent => agent.id === currentFlow().workflow[from]).name)}</strong>. Other agents keep their relative order.</p><ol class="order-preview">${ui.pendingOrder.map((agentId, index) => { const agent = state.agents.find(item => item.id === agentId); return html`<li class="${currentFlow().workflow[index] !== agentId ? "changed" : ""}"><span>${index + 1}</span>${agentIcon(agent)}<strong>${escape(agent.name)}</strong>${currentFlow().workflow[index] !== agentId ? html`<small>Moved</small>` : ""}</li>`; }).join("")}</ol>`, button("close-modal", "Keep current order", "") + button("apply-order", "Apply new order", "check", "primary"));
-    }
-    else if (action === "apply-order") {
-      if (!ui.pendingOrder || !changeFlowOrder(ui.pendingOrder)) return;
-      ui.pendingOrder = null;
-      persist(); closeModal(); render(); toast("New order saved.");
+      changeConnections([...flowEdges(currentFlow()), { from: ui.linkFrom, to: id }]);
     }
     else if (action === "library") libraryModal();
     else if (action === "new-agent") newAgentModal();
@@ -1668,7 +1691,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       }
     }
     else if (action === "download-artifact") { const artifact = focusedDocument(sessionRun(), id) || findArtifact(id); if (artifact?.mime) { const link = document.createElement("a"); link.href = `/api/artifacts/${sessionRun().id}/${artifact.id}`; link.download = artifact.name; link.click(); } else if (artifact) download(artifact.name, artifact.content); }
-    else if (action === "export") download("agent-studio-workflow.json", JSON.stringify({ version: 1, name: currentFlow().name, workflow: currentFlow().workflow, rules: currentFlow().rules || [], revision: currentFlow().revision || 1, agents: state.agents.filter(agent => currentFlow().workflow.includes(agent.id)).map(({ skills, ...agent }) => agent), brief: state.brief, approvalRequired: state.approvalRequired }, null, 2), "application/json");
+    else if (action === "export") download("agent-studio-workflow.json", JSON.stringify({ version: 1, name: currentFlow().name, workflow: currentFlow().workflow, ...(currentFlow().edges ? { edges: currentFlow().edges, maxParallel: currentFlow().maxParallel ?? 4 } : {}), rules: currentFlow().rules || [], revision: currentFlow().revision || 1, agents: state.agents.filter(agent => currentFlow().workflow.includes(agent.id)).map(({ skills, ...agent }) => agent), brief: state.brief, approvalRequired: state.approvalRequired }, null, 2), "application/json");
     else if (action === "reset") {
       if (ui.navigationOpen) closeNavigation();
       else { closeNavigationActions(); app.querySelector('[data-action="navigation-actions"]').focus(); }
@@ -1691,6 +1714,13 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
   document.addEventListener("change", event => {
     if (event.target.id === "message-mode") { ui.messageModes[event.target.dataset.id] = event.target.value; render(true); document.getElementById("message-mode-control")?.focus({ preventScroll: true }); return; }
     const input = event.target;
+    if (input.dataset.flowFrom) {
+      const edges = flowEdges(currentFlow()).filter(edge => edge.from !== input.dataset.flowFrom || edge.to !== input.dataset.flowTo);
+      if (input.checked) edges.push({ from: input.dataset.flowFrom, to: input.dataset.flowTo });
+      if (!changeConnections(edges)) input.checked = !input.checked;
+      return;
+    }
+    if (input.id === "flow-parallel") { currentFlow().maxParallel = Number(input.value); persist(); return; }
     if (input.id === "max-concurrent-runs") { state.maxConcurrentRuns = Number(input.value); persist(); render(); return; }
     if (input.id === "ui-language") { state.language = input.value; setLanguage(input.value); document.querySelector(".skip-link").textContent = t("Skip to content"); persist(); render(); return; }
     if (input.id === "local-import-provider") renderLocalImportList();

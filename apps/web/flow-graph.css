@@ -1,0 +1,11 @@
+.flow-parallel { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; padding: 14px 18px; border-top: 1.5px dashed var(--line-2); }
+.flow-parallel label { font-size: 12px; font-weight: 700; }
+.flow-parallel .studio-select { width: 74px; flex: 0 0 74px; }
+.flow-parallel p { margin: 0; flex: 1 1 260px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.step-connections { padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1.5px dashed var(--line-2); }
+.step-connections h3 { font-size: 14px; margin: 0 0 10px; }
+.step-connections fieldset { border: 0; padding: 0; margin: 16px 0; display: grid; gap: 10px; }
+.step-connections legend { font-size: 12px; font-weight: 700; padding: 0; margin-bottom: 10px; }
+.step-connections label { display: flex; align-items: center; gap: 10px; font-size: 13px; overflow-wrap: anywhere; }
+.step-connections input { width: 17px; height: 17px; accent-color: var(--purple); }
+@media (max-width: 640px) { .flow-parallel { padding: 12px; } .flow-parallel p { flex-basis: 100%; } }
