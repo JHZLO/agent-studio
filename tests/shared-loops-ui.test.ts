@@ -110,7 +110,7 @@ test("Shared loop controls show return paths, causal history and a human replan"
   await page.getByRole("button", { name: "Lock and continue", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Choose the next revision", exact: true })).toBeVisible();
   await expect(page.locator(".progress-label")).toContainText("Coder revisions 2/2");
-  assert.equal(store.state().run.loopCounts["shared:coder"], 2);
+  assert.equal(store.state().run!.loopCounts!["shared:coder"], 2);
   await expect(page.getByRole("button", { name: "Run one more revision", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Approve and continue", exact: true })).toHaveCount(0);
   await expect(page.locator(".revision-banner")).toContainText("Tester → Coder");
@@ -126,7 +126,7 @@ test("Shared loop controls show return paths, causal history and a human replan"
   await page.getByRole("button", { name: "Outputs", exact: true }).click();
   await page.locator(".revision-evidence").getByRole("button", { name: "View reported findings", exact: true }).click();
   await expect(page.locator(".focus-document-content .revision-finding")).toContainText("Two rewards");
-  const sourceStepId = store.state().run.revisionHistory.at(-1).sourceStepId;
+  const sourceStepId = store.state().run!.revisionHistory!.at(-1)!.sourceStepId;
   await expect(page.locator(`[data-attempt-id="${sourceStepId}"]`)).toHaveAttribute("open", "");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Documents", exact: true }).click();
@@ -141,12 +141,12 @@ test("Shared loop controls show return paths, causal history and a human replan"
   await page.getByLabel(/What should Coder change/).fill("Review the transaction boundary with me");
   await page.getByRole("button", { name: "Revisit plan", exact: true }).click();
   await expect(page.getByRole("button", { name: "Lock and continue", exact: true })).toBeVisible();
-  assert.equal(store.state().run.lockedPlan, undefined);
-  assert.equal(store.state().run.steps[1].status, "queued");
-  assert.equal(store.state().run.revisionHistory.at(-1).targetAgentId, "planner");
+  assert.equal(store.state().run!.lockedPlan, undefined);
+  assert.equal(store.state().run!.steps[1].status, "queued");
+  assert.equal(store.state().run!.revisionHistory!.at(-1)!.targetAgentId, "planner");
   await page.getByRole("button", { name: "Lock and continue", exact: true }).click();
   await page.getByRole("button", { name: "Approve and continue", exact: true }).click();
-  await expect.poll(() => store.state().run.status).toBe("succeeded");
-  assert.equal(store.state().run.loopCounts["shared:coder"], 2);
+  await expect.poll(() => store.state().run!.status).toBe("succeeded");
+  assert.equal(store.state().run!.loopCounts!["shared:coder"], 2);
   assert.deepEqual(errors, []);
 });

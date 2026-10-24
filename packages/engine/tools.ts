@@ -10,10 +10,15 @@ import { hash } from "./store.ts";
 import { codexBinary, runtimeEnvironment, root, type Wire } from "./codex.ts";
 import type { Run, Step, Artifact } from "../contracts/index.ts";
 
-type Context = { run: Run; step: Step; save: (kind: string, detail?: unknown) => void; approval: (kind: "shell" | "network" | "write", description: string, details: string) => Promise<boolean>; redact: (text: string) => string };
+type Context = { artifact?: (id: string) => Artifact | undefined; delegate?: (name: string, input: Wire, signal: AbortSignal) => Promise<unknown>; run: Run; step: Step; save: (kind: string, detail?: unknown) => void; approval: (kind: "shell" | "network" | "write", description: string, details: string) => Promise<boolean>; redact: (text: string) => string };
 export type Receipt = { id: string; tool: string; input: unknown; output: unknown; at: string; codeReference: string; success: boolean };
 const object = (properties: Wire, required: string[]) => ({ type: "object", properties, required, additionalProperties: false });
 const string = { type: "string" };
+const delegationSpecs = [
+  { name: "studio_delegate", description: "Start an independent child task using an allowed frozen agent preset. Returns immediately. Use read for analysis or write for isolated implementation or test execution with the enabled tools. Never delegate dependent work before its inputs exist. Depth is limited to one.", inputSchema: object({ agentId: string, task: string, mode: { type: "string", enum: ["read", "write"] } }, ["agentId", "task", "mode"]) },
+  { name: "studio_delegations", description: "Read child status, bounded summaries and evidence references. Set wait=true to wait up to 30 seconds for active children. Read artifacts for full evidence. A child result is not integrated until collected.", inputSchema: object({ wait: { type: "boolean" } }, ["wait"]) },
+  { name: "studio_collect", description: "Accept a completed child result or discard it with a reason. Accept integrates an isolated write diff only if affected parent files have not changed. After accepting writes, run combined tests in the parent. Every child must be accepted or discarded before handoff.", inputSchema: object({ id: string, action: { type: "string", enum: ["accept", "discard"] }, reason: string }, ["id", "action", "reason"]) },
+];
 const specs = [
   { name: "studio_list", permission: "read", description: "List files allowed by the agent's permission level. Generated files and symlinks are omitted.", inputSchema: object({ path: string, depth: { type: "integer", minimum: 1, maximum: 3 } }, ["path", "depth"]) },
   { name: "studio_read", permission: "read", description: "Read a UTF-8 file allowed by the agent's permission level. Relative paths start at the project. Content is limited to 256 KB.", inputSchema: object({ path: string }, ["path"]) },
@@ -25,7 +30,7 @@ const specs = [
   { name: "studio_load_test", permission: "shell", description: "Run a bounded k6 GET load test against a loopback HTTP endpoint. Maximum 5 virtual users and 10 seconds. Requires the locally installed k6 executable.", inputSchema: object({ url: string, vus: { type: "integer", minimum: 1, maximum: 5 }, seconds: { type: "integer", minimum: 1, maximum: 10 } }, ["url", "vus", "seconds"]) },
 ] as const;
 export const enabledTools = (step: Step) => step.agent.tools.filter(tool => step.agent.permissionLevel !== "read-only" || tool === "read");
-export const toolSpecs = (step: Step) => specs.filter(spec => enabledTools(step).includes(spec.permission)).map(({ permission, ...spec }) => ({ type: "function", ...spec }));
+export const toolSpecs = (step: Step) => [...specs.filter(spec => enabledTools(step).includes(spec.permission)).map(({ permission, ...spec }) => spec), ...(step.agent.delegation?.enabled ? delegationSpecs : [])].map(spec => ({ type: "function", ...spec }));
 
 export async function codeReference(cwd: string) {
   const head = await git(cwd, ["rev-parse", "--verify", "HEAD"]);
@@ -64,6 +69,7 @@ export class Toolbox {
   private processes = new Set<ChildProcess>();
   private foreground = new Set<ChildProcess>();
   private calls = new Set<Promise<unknown>>();
+  private serial: Promise<unknown> = Promise.resolve();
   private abort = new AbortController();
   private browser?: Browser;
   private page?: Page;
@@ -98,13 +104,14 @@ export class Toolbox {
     return url;
   }
   call(name: string, raw: unknown) {
-    const pending = this.recordCall(name, raw).finally(() => this.calls.delete(pending));
+    const pending = this.serial.catch(() => {}).then(() => this.recordCall(name, raw)).finally(() => this.calls.delete(pending));
+    this.serial = pending;
     this.calls.add(pending);
     return pending;
   }
   private async recordCall(name: string, raw: unknown) {
     const spec = specs.find(spec => spec.name === name);
-    if (!spec || !enabledTools(this.context.step).includes(spec.permission)) throw new Error("This tool is not enabled for the agent.");
+    if ((!spec || !enabledTools(this.context.step).includes(spec.permission)) && !(this.context.delegate && this.context.step.agent.delegation?.enabled && delegationSpecs.some(item => item.name === name))) throw new Error("This tool is not enabled for the agent.");
     if (this.disposed) throw new Error("The run is no longer accepting tool calls.");
     this.abort.signal.throwIfAborted();
     if (this.receipts.length >= 100 || this.evidenceBytes > 1024 * 1024) throw new Error("This step reached its tool evidence budget. Return a handoff with any remaining work; do not repeat this call.");
@@ -124,9 +131,10 @@ export class Toolbox {
     return { receiptId: id, success, result: output };
   }
   private async execute(name: string, input: Wire): Promise<unknown> {
+    if (delegationSpecs.some(spec => spec.name === name)) return this.context.delegate!(name, input, this.abort.signal);
     if (name === "studio_artifact") {
       const { id, offset } = z.object({ id: z.string(), offset: z.number().int().min(0) }).parse(input);
-      const artifact = this.context.run.artifacts.find(item => item.id === id);
+      const artifact = this.context.run.artifacts.find(item => item.id === id) ?? this.context.artifact?.(id);
       if (!artifact) throw new Error("Artifact not found in this run.");
       return { name: artifact.name, codeReference: artifact.codeReference, content: artifact.content.slice(offset, offset + 16000), nextOffset: offset + 16000 < artifact.content.length ? offset + 16000 : null };
     }

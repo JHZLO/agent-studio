@@ -118,7 +118,7 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   await page.getByRole("button", { name: "Lock only", exact: true }).click();
   await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
   assert.equal(calls.length, 2);
-  assert.equal(store.state().run.lockedPlan.version, 1);
+  assert.equal(store.state().run!.lockedPlan!.version, 1);
   await page.getByRole("button", { name: "Resume", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Choose the next revision", exact: true })).toBeVisible();
   assert.equal(calls.filter(step => step.agent.role === "coder").length, 2);
@@ -128,13 +128,13 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   await expect(page.locator(".attempts-list")).toContainText("Attempt 2");
   await page.getByRole("button", { name: "Flows", exact: true }).click();
   await openStep("Reviewer"); await page.getByLabel("Maximum automatic revisions").fill("4");
-  store.saveRun(await studio.dispatch("run.read", { id: store.state().run.id }), "ui.refresh");
+  store.saveRun(await studio.dispatch("run.read", { id: store.state().run!.id }), "ui.refresh");
   await expect(page.getByLabel("Maximum automatic revisions")).toHaveValue("4");
   await saveRule();
   assert.equal(flow().rules[1].loop?.maxCycles, 4);
-  assert.equal(store.state().run.flow.rules[1].loop.maxCycles, 1);
+  assert.equal(store.state().run!.flow.rules[1].loop!.maxCycles, 1);
   await page.locator('[data-action="navigate"][data-view="runs"]').click();
-  await page.locator(`.history-table [data-action="open-run"][data-id="${store.state().run.id}"]`).click();
+  await page.locator(`.history-table [data-action="open-run"][data-id="${store.state().run!.id}"]`).click();
   await page.getByRole("button", { name: "Review outputs", exact: true }).click();
   reviewerPasses = true;
   await page.locator("#review-feedback").fill("Use an atomic claim before processing");
@@ -144,8 +144,8 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   await expect(page.getByRole("button", { name: "Approve and continue", exact: true })).toBeVisible();
   await expect.poll(async () => { const box = await page.locator(".review-workspace").boundingBox(); return box ? box.x + box.width : Infinity; }).toBeLessThanOrEqual(390);
   await page.getByRole("button", { name: "Approve and continue", exact: true }).click();
-  await expect.poll(() => store.state().run.status).toBe("succeeded");
+  await expect.poll(() => store.state().run!.status).toBe("succeeded");
   assert.equal(calls.filter(step => step.agent.role === "coder").length, 3);
-  assert.equal(store.state().run.reviewHistory.at(-1).action, "approved");
+  assert.equal(store.state().run!.reviewHistory!.at(-1)!.action, "approved");
   assert.deepEqual(errors, []);
 });

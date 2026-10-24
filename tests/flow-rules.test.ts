@@ -200,7 +200,7 @@ test("Recovery cannot bypass a saved checkpoint at either a handoff or the final
   for (const after of ["planner", "reviewer"]) {
     const f = await fixture(t, [{ after, review: "always" }]);
     const started = await f.start(), waiting = await f.wait(started.id, "waiting_review");
-    const active = await f.studio.dispatch("run.read", { id: started.id }) as Run, calls = f.calls.length;
+    const active = (f.studio as any).getRun(started.id) as Run, calls = f.calls.length;
     active.status = "needs_reconciliation"; f.store.saveRun(active, "provider.disconnected");
     const restored = await f.studio.dispatch("run.reconcile", { id: started.id }) as Run;
     assert.equal(restored.status, "waiting_review");

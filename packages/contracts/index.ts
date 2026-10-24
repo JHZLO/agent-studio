@@ -8,6 +8,7 @@ export const agentSchema = z.object({
   permissionLevel: z.enum(["ask", "read-only", "project", "bypass"]).default("ask"),
   codexFastMode: z.enum(["default", "on", "off"]).default("default"),
   prompt: z.string().trim().min(1).max(20000), tools: z.array(z.enum(["read", "write", "shell", "browser"])).max(4),
+  delegation: z.object({ enabled: z.boolean().default(false), maxChildren: z.number().int().min(1).max(3).default(3), allowedAgentIds: z.array(z.string().min(1).max(100)).max(100).default([]) }).optional(),
   skillBindings: z.array(bindingSchema).max(30).default([]),
 });
 export const executionSchema = z.object({ mode: z.enum(["local", "worktree"]), baseRef: z.string().nullable().optional(), branchName: z.string().max(200).default("") });
@@ -64,6 +65,7 @@ export const settingsSchema = z.object({
   if (ids.size !== value.agents.length || new Set(value.flows.map(f => f.id)).size !== value.flows.length) ctx.addIssue({ code: "custom", message: "Preset and flow IDs must be unique." });
   if (!value.flows.some(f => f.id === value.activeFlowId && !f.archived)) ctx.addIssue({ code: "custom", message: "Keep an active flow selected." });
   if (value.flows.some(f => new Set(f.workflow).size !== f.workflow.length || f.workflow.some(id => !ids.has(id)))) ctx.addIssue({ code: "custom", message: "Flows must reference unique existing presets." });
+  if (value.agents.some(agent => agent.delegation?.allowedAgentIds.some(id => !ids.has(id)))) ctx.addIssue({ code: "custom", message: "Delegation must reference existing agent presets." });
   if (new Set(value.projects.map(p => p.path)).size !== value.projects.length) ctx.addIssue({ code: "custom", message: "This project folder is already registered." });
   if (new Set(value.projects.map(p => p.id)).size !== value.projects.length) ctx.addIssue({ code: "custom", message: "Project IDs must be unique." });
   if (value.activeProjectId !== null && !value.projects.some(p => p.id === value.activeProjectId)) ctx.addIssue({ code: "custom", message: "Select a registered project or clear the selection." });
@@ -92,6 +94,8 @@ export type Run = { id: string; brief: string; project: Project; projectRules?: 
   stepHistory?: Step[]; loopCounts?: Record<string, number>; lockedPlan?: { version: number; stepId: string; artifactIds: string[] };
   revisionHistory?: Revision[];
   followup?: { id: string; stepId: string; message: string; startedAt: string; previousStatus: Status; previousStepStatus: Status; previousNote: string; previousFinalText?: string; codeReference: string; turnId?: string; stopRequested?: boolean };
+  parent?: { runId: string; stepId: string; task: string; write: boolean; snapshot?: string; sourceReference: string; resolution: "pending" | "accepted" | "discarded"; reason?: string; integratedReference?: string; integratedAt?: string };
+  delegatePresets?: Agent[]; children?: Run[]; delegationContinuation?: boolean;
   acceptingMessages?: boolean; pendingMessages?: AgentMessage[]; activeMessage?: AgentMessage; interruptRequested?: boolean;
 };
 export const activeStatuses: Status[] = ["queued", "running", "waiting_approval", "waiting_review", "paused", "cancelling", "needs_reconciliation"];

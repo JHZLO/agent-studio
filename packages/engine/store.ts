@@ -41,12 +41,16 @@ export class Store extends EventEmitter {
     const row = this.db.prepare("SELECT value FROM runs WHERE id = ?").get(id) as { value: string } | undefined;
     return row ? JSON.parse(row.value) : null;
   }
+  children(id: string): Run[] {
+    return (this.db.prepare("SELECT value FROM runs WHERE json_extract(value, '$.parent.runId') = ? ORDER BY created_at, rowid").all(id) as { value: string }[]).map(row => JSON.parse(row.value));
+  }
+  view(run: Run): Run { return run.parent ? run : { ...run, children: this.children(run.id) }; }
   runs(): Run[] { return (this.db.prepare("SELECT value FROM runs ORDER BY created_at DESC, rowid DESC").all() as { value: string }[]).map(row => JSON.parse(row.value)); }
   activeRuns(): Run[] {
     return (this.db.prepare(`SELECT value FROM runs WHERE json_extract(value, '$.status') IN (${activeStatuses.map(() => "?").join(",")}) ORDER BY created_at DESC, rowid DESC`).all(...activeStatuses) as { value: string }[]).map(row => JSON.parse(row.value));
   }
   history() {
-    return (this.db.prepare("SELECT id, json_extract(value, '$.brief') AS brief, json_extract(value, '$.status') AS status, json_extract(value, '$.project') AS project, json_extract(value, '$.flow') AS flow, json_array_length(value, '$.artifacts') AS artifactCount FROM runs ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 1").all() as { id: string; brief: string; status: Run["status"]; project: string; flow: string; artifactCount: number }[]).map(row => ({ ...row, project: JSON.parse(row.project), flow: JSON.parse(row.flow), artifacts: [], summary: true }));
+    return (this.db.prepare("SELECT id, json_extract(value, '$.brief') AS brief, json_extract(value, '$.status') AS status, json_extract(value, '$.project') AS project, json_extract(value, '$.flow') AS flow, json_array_length(value, '$.artifacts') AS artifactCount FROM runs WHERE json_extract(value, '$.parent') IS NULL ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 1").all() as { id: string; brief: string; status: Run["status"]; project: string; flow: string; artifactCount: number }[]).map(row => ({ ...row, project: JSON.parse(row.project), flow: JSON.parse(row.flow), artifacts: [], summary: true }));
   }
   receipts(runId: string, stepId: string) {
     return (this.db.prepare("SELECT value FROM events WHERE run_id = ? AND kind = 'tool.completed' AND json_extract(value, '$.stepId') = ? ORDER BY seq").all(runId, stepId) as { value: string }[]).map(row => JSON.parse(row.value));
@@ -55,7 +59,7 @@ export class Store extends EventEmitter {
     const event = this.db.transaction(() => {
       const result = this.db.prepare("INSERT INTO events(run_id, kind, value, created_at) VALUES (?, ?, ?, ?)").run(run.id, kind, JSON.stringify(detail), new Date().toISOString());
       run.eventSeq = Number(result.lastInsertRowid);
-      this.db.prepare("INSERT INTO runs VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value").run(run.id, run.createdAt, JSON.stringify(run));
+      this.db.prepare("INSERT INTO runs VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value").run(run.id, run.createdAt, JSON.stringify({ ...run, children: undefined }));
       return { seq: run.eventSeq, runId: run.id, kind, detail };
     })();
     this.emit("event", event);
@@ -83,8 +87,8 @@ export class Store extends EventEmitter {
     }
   }
   state() {
-    const latest = this.db.prepare("SELECT value FROM runs ORDER BY created_at DESC, rowid DESC LIMIT 1").get() as { value: string } | undefined;
-    return { ...this.get<Settings>("settings"), connections: this.get<Connection[]>("connections") ?? [], run: latest ? JSON.parse(latest.value) : null, history: this.history(), activeRuns: this.activeRuns(), importedSessions: this.importedSessions(), revision: this.get<number>("revision") ?? 0, eventSeq: this.seq() };
+    const latest = this.db.prepare("SELECT value FROM runs WHERE json_extract(value, '$.parent') IS NULL ORDER BY created_at DESC, rowid DESC LIMIT 1").get() as { value: string } | undefined;
+    return { ...this.get<Settings>("settings"), connections: this.get<Connection[]>("connections") ?? [], run: latest ? this.view(JSON.parse(latest.value)) : null, history: this.history(), activeRuns: this.activeRuns().filter(run => !run.parent).map(run => this.view(run)), importedSessions: this.importedSessions(), revision: this.get<number>("revision") ?? 0, eventSeq: this.seq() };
   }
   close() { this.db.close(); }
 }

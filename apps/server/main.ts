@@ -82,6 +82,7 @@ app.get<{ Querystring: { after?: string } }>("/api/events", async (request, repl
         for (const event of events) if (event.runId) changed.set(event.runId, event.seq);
         for (const [id, seq] of [...changed].sort((a, b) => a[1] - b[1])) {
           const run = await rpc("run.read", { id });
+          if (run.parent) continue;
           reply.raw.write(`id: ${seq}\nevent: run\ndata: ${JSON.stringify(run)}\n\n`);
         }
         sequence = events.at(-1).seq;
