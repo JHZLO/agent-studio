@@ -12,7 +12,7 @@ import { settingsSchema, type Run } from "../packages/contracts/index.ts";
 import { Store, hash } from "../packages/engine/store.ts";
 import { codeReference } from "../packages/engine/tools.ts";
 
-test("Project toggles group active tasks and update without disrupting the current page", { timeout: 60000 }, async t => {
+test("Project toggles retain completed tasks and update without disrupting the current page", { timeout: 60000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "studio-project-nav-"));
   const store = new Store(join(root, "studio.sqlite"));
   const settings = settingsSchema.parse({ ...initialState(), language: "ko", maxConcurrentRuns: 3, skillRoots: [] });
@@ -56,14 +56,18 @@ test("Project toggles group active tasks and update without disrupting the curre
     assert.equal(response.status(), 200, await response.text());
   };
   await expect(toggle("a")).toHaveAttribute("aria-expanded", "true");
-  await expect(branch("a").locator(".project-task-title")).toHaveText(["Task a2", "Task a1"]);
-  await expect(branch("a").locator(".nav-count")).toHaveText("2");
-  await expect(task("finished")).toHaveCount(0);
+  await expect(branch("a").locator(".project-task-title")).toHaveText(["Task a2", "Task a1", "Finished task"]);
+  await expect(branch("a").locator(".nav-count")).toHaveText("3");
+  await expect(task("finished").locator(".badge")).toHaveText("완료");
+  await task("finished").click();
+  await expect(page.locator(".run-heading h1")).toHaveText("Finished task");
+  await expect(page.locator('.artifact-row[data-id="plan-a1"]')).toBeVisible();
   await toggle("a").press("Enter"); await expect(task("a1")).toBeHidden();
   await toggle("a").press("Space"); await expect(task("a1")).toBeVisible();
   await toggle("b").click(); await expect(branch("b").locator(".project-task-title")).toHaveText("Task b1");
+  await expect(toggle("b")).toBeFocused();
   await toggle("b").click();
-  await toggle("empty").click(); await expect(branch("empty").locator(".project-tasks-empty")).toHaveText("진행 중인 작업이 없습니다");
+  await toggle("empty").click(); await expect(branch("empty").locator(".project-tasks-empty")).toHaveText("아직 작업이 없습니다");
   await branch("empty").getByRole("button", { name: "Project empty에서 새 작업", exact: true }).click();
   await expect.poll(async () => (await current()).activeProjectId).toBe("empty");
   assert.equal((await current()).activeRuns.length, 3);
@@ -79,11 +83,13 @@ test("Project toggles group active tasks and update without disrupting the curre
   await expect(page.locator('#flow-rule-form [name="review"]')).toHaveValue("on_issue");
   await expect(toggle("b")).toHaveAttribute("aria-expanded", "false");
   await task("a1").focus(); await control("a1", "cancel");
-  await expect(task("a1")).toHaveCount(0); await expect(toggle("a")).toBeFocused();
-  await expect(branch("a").locator(".nav-count")).toHaveText("1");
+  await expect(task("a1").locator(".badge")).toHaveText("취소됨");
+  await expect(task("a1")).toBeFocused();
+  await expect(branch("a").locator(".nav-count")).toHaveText("3");
   await control("b1", "approve-review");
-  await expect(branch("b").locator(".nav-count")).toHaveText("0");
-  await toggle("b").click(); await expect(branch("b").locator(".project-tasks-empty")).toBeVisible();
+  await expect(branch("b").locator(".nav-count")).toHaveText("1");
+  await toggle("b").click(); await expect(task("b1").locator(".badge")).toHaveText("완료");
+  await expect(branch("b").locator(".project-tasks-empty")).toHaveCount(0);
   await expect(page.locator('#flow-rule-form [name="review"]')).toHaveValue("on_issue");
   assert.deepEqual((await current()).flows, settings.flows);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -98,5 +104,10 @@ test("Project toggles group active tasks and update without disrupting the curre
     const bounds = await task("a2").boundingBox(), nav = await page.locator(".sidebar").boundingBox();
     return !!bounds && !!nav && bounds.x >= nav.x && bounds.x + bounds.width <= nav.x + nav.width;
   }).toBe(true);
+  await page.reload();
+  await toggle("a").click();
+  await expect(branch("a").locator(".project-task-title")).toHaveText(["Task a2", "Task a1", "Finished task"]);
+  await task("finished").click(); await expect(page.locator(".run-heading h1")).toHaveText("Finished task");
+  await page.setViewportSize({ width: 1440, height: 1000 });
   assert.deepEqual(errors, []);
 });

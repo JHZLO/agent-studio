@@ -53,7 +53,7 @@ test("Concurrency settings persist and real API events keep two task controls is
   await expect(page.locator('[data-active-count]')).toHaveText("진행 중 2개 / 최대 3개");
   await expect(page.locator('[data-action="run"]')).toHaveText("작업 실행");
   const open = async (target: typeof page, id: string) => {
-    await target.getByRole("button", { name: "작업", exact: true }).click();
+    await target.getByRole("button", { name: "최근 작업", exact: true }).click();
     await target.locator(`.history-table [data-action="open-run"][data-id="${id}"]`).click();
   };
   await open(page, "a");
