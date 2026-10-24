@@ -3,7 +3,7 @@ import { mkdirSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import type { Run, Settings, Connection, ImportedSession } from "../contracts/index.ts";
+import { activeStatuses, type Run, type Settings, type Connection, type ImportedSession } from "../contracts/index.ts";
 
 export const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 export class Store extends EventEmitter {
@@ -41,9 +41,12 @@ export class Store extends EventEmitter {
     const row = this.db.prepare("SELECT value FROM runs WHERE id = ?").get(id) as { value: string } | undefined;
     return row ? JSON.parse(row.value) : null;
   }
-  runs(): Run[] { return (this.db.prepare("SELECT value FROM runs ORDER BY created_at DESC").all() as { value: string }[]).map(row => JSON.parse(row.value)); }
+  runs(): Run[] { return (this.db.prepare("SELECT value FROM runs ORDER BY created_at DESC, rowid DESC").all() as { value: string }[]).map(row => JSON.parse(row.value)); }
+  activeRuns(): Run[] {
+    return (this.db.prepare(`SELECT value FROM runs WHERE json_extract(value, '$.status') IN (${activeStatuses.map(() => "?").join(",")}) ORDER BY created_at DESC, rowid DESC`).all(...activeStatuses) as { value: string }[]).map(row => JSON.parse(row.value));
+  }
   history() {
-    return (this.db.prepare("SELECT id, json_extract(value, '$.brief') AS brief, json_extract(value, '$.status') AS status, json_extract(value, '$.project') AS project, json_extract(value, '$.flow') AS flow, json_array_length(value, '$.artifacts') AS artifactCount FROM runs ORDER BY created_at DESC LIMIT -1 OFFSET 1").all() as { id: string; brief: string; status: Run["status"]; project: string; flow: string; artifactCount: number }[]).map(row => ({ ...row, project: JSON.parse(row.project), flow: JSON.parse(row.flow), artifacts: [], summary: true }));
+    return (this.db.prepare("SELECT id, json_extract(value, '$.brief') AS brief, json_extract(value, '$.status') AS status, json_extract(value, '$.project') AS project, json_extract(value, '$.flow') AS flow, json_array_length(value, '$.artifacts') AS artifactCount FROM runs ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 1").all() as { id: string; brief: string; status: Run["status"]; project: string; flow: string; artifactCount: number }[]).map(row => ({ ...row, project: JSON.parse(row.project), flow: JSON.parse(row.flow), artifacts: [], summary: true }));
   }
   receipts(runId: string, stepId: string) {
     return (this.db.prepare("SELECT value FROM events WHERE run_id = ? AND kind = 'tool.completed' AND json_extract(value, '$.stepId') = ? ORDER BY seq").all(runId, stepId) as { value: string }[]).map(row => JSON.parse(row.value));
@@ -80,8 +83,8 @@ export class Store extends EventEmitter {
     }
   }
   state() {
-    const latest = this.db.prepare("SELECT value FROM runs ORDER BY created_at DESC LIMIT 1").get() as { value: string } | undefined;
-    return { ...this.get<Settings>("settings"), connections: this.get<Connection[]>("connections") ?? [], run: latest ? JSON.parse(latest.value) : null, history: this.history(), importedSessions: this.importedSessions(), revision: this.get<number>("revision") ?? 0, eventSeq: this.seq() };
+    const latest = this.db.prepare("SELECT value FROM runs ORDER BY created_at DESC, rowid DESC LIMIT 1").get() as { value: string } | undefined;
+    return { ...this.get<Settings>("settings"), connections: this.get<Connection[]>("connections") ?? [], run: latest ? JSON.parse(latest.value) : null, history: this.history(), activeRuns: this.activeRuns(), importedSessions: this.importedSessions(), revision: this.get<number>("revision") ?? 0, eventSeq: this.seq() };
   }
   close() { this.db.close(); }
 }

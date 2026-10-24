@@ -25,6 +25,7 @@ function initialState() {
   return {
     version: 1,
     language: "en",
+    maxConcurrentRuns: 1,
     skillRoots: ["~/.agents/skills", "~/.codex/skills", "~/.claude/skills"],
     agents: Object.entries(roles).map(([role, details]) => ({
       id: role,

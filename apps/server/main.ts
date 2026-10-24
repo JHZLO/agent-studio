@@ -78,9 +78,13 @@ app.get<{ Querystring: { after?: string } }>("/api/events", async (request, repl
     try {
       const { events } = await rpc("events", { after: sequence });
       if (events.length) {
+        const changed = new Map<string, number>();
+        for (const event of events) if (event.runId) changed.set(event.runId, event.seq);
+        for (const [id, seq] of [...changed].sort((a, b) => a[1] - b[1])) {
+          const run = await rpc("run.read", { id });
+          reply.raw.write(`id: ${seq}\nevent: run\ndata: ${JSON.stringify(run)}\n\n`);
+        }
         sequence = events.at(-1).seq;
-        const { run } = await rpc("state");
-        reply.raw.write(`id: ${sequence}\nevent: run\ndata: ${JSON.stringify(run)}\n\n`);
       } else reply.raw.write(": heartbeat\n\n");
     } catch { reply.raw.write("event: reconnect\ndata: {}\n\n"); }
     await delay(500);

@@ -190,9 +190,11 @@ test("Concurrent starts cannot prepare two workflows while account validation is
   t.after(async () => { await studio.close(); store.close(); });
   const settings = studio.settings(); settings.projects = [{ id: "project", name: "Fixture", path, execution: { mode: "local", branchName: "" } }]; settings.skillRoots = []; store.set("settings", settings);
   let release!: (error: Error) => void;
-  const gate = new Promise<void>((_resolve, reject) => { release = reject; }); studio.connections.assertAgent = async () => gate;
+  let entered!: () => void; const checking = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>((_resolve, reject) => { release = reject; }); studio.connections.assertAgent = async () => { entered(); return gate; };
   const input = { projectId: "project", flowId: settings.activeFlowId, brief: "Read only", commandId: "first" };
   const first = studio.dispatch("run.start", input);
+  await checking;
   await assert.rejects(studio.dispatch("run.start", { ...input, commandId: "second" }), /Only one run/);
   await assert.rejects(studio.dispatch("project.remove", { id: "project", revision: 0 }), /finish starting/);
   release(new Error("Account check stopped for this test.")); await assert.rejects(first, /Account check stopped/);

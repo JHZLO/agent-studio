@@ -127,7 +127,7 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   await expect(page.locator(".attempts-list")).toContainText("Attempt 2");
   await page.getByRole("button", { name: "Flows", exact: true }).click();
   await openStep("Reviewer"); await page.getByLabel("Maximum automatic revisions").fill("4");
-  store.saveRun((studio as any).active, "ui.refresh");
+  store.saveRun(await studio.dispatch("run.read", { id: store.state().run.id }), "ui.refresh");
   await expect(page.getByLabel("Maximum automatic revisions")).toHaveValue("4");
   await saveRule();
   assert.equal(flow().rules[1].loop?.maxCycles, 4);
