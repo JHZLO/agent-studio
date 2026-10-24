@@ -67,7 +67,7 @@ test("Concurrency settings persist and real API events keep two task controls is
   const response = await page.request.post(origin + "/api/runs/control", { headers: { Origin: origin, "X-Studio-CSRF": boot.csrf }, data: { id: "b", action: "approve-review-only", reviewId: runs[1].review!.id, fingerprint: runs[1].review!.fingerprint } });
   assert.equal(response.status(), 200);
   await expect.poll(async () => (await current()).activeRuns.every((run: Run) => run.status === "paused")).toBe(true);
-  await expect(observer.locator(".review-document pre")).toHaveText("Plan a");
+  await expect(observer.locator(".review-document .markdown-body")).toHaveText("Plan a");
   await page.reload();
   await chooseLimit(1); assert.equal((await current()).activeRuns.length, 2);
   await page.setViewportSize({ width: 390, height: 844 });

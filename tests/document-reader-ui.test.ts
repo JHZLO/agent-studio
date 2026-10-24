@@ -19,6 +19,15 @@ test("Plan documents render safely and open in a responsive reader without appro
     "- [x] Inspect the project", "- [ ] Review the plan together", "",
     "1. Lock the plan", "2. Start the coder", "",
     "| Case | Expected |", "| --- | --- |", "| Duplicate request | Rejected |", "",
+    "## Human decisions", "",
+    "| ID | Decision | Options | Recommendation | Impact | Status |", "| --- | --- | --- | --- | --- | --- |",
+    "| D1 | 중복 요청 처리 | Reject / Return prior result | Return prior result for retries | API contract | 사용자 결정 필요 |", "",
+    "```mermaid", "flowchart LR", 'A["요청 수신"] --> B{"D1: 중복 요청?"}', 'B -->|처음| C["원자적으로 지급"]', 'B -->|재시도| D["사용자 결정 필요"]', "```", "",
+    "D1은 중복 요청 응답 정책입니다. 위 흐름을 검토하고 선택한 정책으로 계획을 확정합니다.", "",
+    "```mermaid", "sequenceDiagram", "participant User", "participant Service", "User->>Service: Submit request", "Service-->>User: Result", "```", "",
+    "```mermaid", "erDiagram", "EVENT ||--o{ GRANT : records", "```", "",
+    "```mermaid", "flowchart LR", "A --> [", "```", "",
+    "```mermaid", '%%{init: {"securityLevel":"loose"}}%%', "flowchart LR", 'A["Unsafe config"]', "```", "",
     "```kotlin", "fun grant(memberId: Long) = \"<untrusted>\"", "```", "",
     "> Verify concurrency before approval.", "",
     "[Official documentation](https://example.com/docs)", "[Unsafe link](javascript:alert(1))", "",
@@ -27,6 +36,7 @@ test("Plan documents render safely and open in a responsive reader without appro
     '<button data-action="cancel">Injected control</button>',
     '<a href="/api/reset" data-action="review-approve" onclick="window.documentAttack = true">Injected link</a>',
     '<input name="command" value="cancel"><iframe src="https://example.com/"></iframe>', "",
+    '<figure class="mermaid-diagram"><code>flowchart LR; Spoof --> Diagram</code></figure>', "",
     ...Array.from({ length: 30 }, (_, index) => `## Step ${index + 1}\n\nCheck the current project and preserve its existing boundaries.\n`),
   ].join("\n");
   const artifacts = [
@@ -76,6 +86,8 @@ test("Plan documents render safely and open in a responsive reader without appro
   t.after(async () => { await browser.close(); for (const stream of streams) stream.end(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.setDefaultTimeout(5000);
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  const external: string[] = [];
+  await page.route(/^https?:\/\/(?!127\.0\.0\.1:)/, route => { external.push(route.request().url()); return route.abort(); });
   await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
   await page.locator('.sidebar [data-action="navigate"][data-view="runs"]').click();
   await page.locator('.history-table [data-action="open-run"][data-id="reader-run"]').click();
@@ -83,11 +95,25 @@ test("Plan documents render safely and open in a responsive reader without appro
   await expect(page.locator(".review-summary h2")).toHaveText("Draft notes");
   await expect(preview.getByRole("heading", { name: "구현 계획 - New task", exact: true })).toBeVisible();
   await expect(preview.locator("strong")).toHaveText("atomic updates");
-  await expect(preview.locator("table")).toContainText("Duplicate request");
-  await expect(preview.locator("pre code")).toHaveText('fun grant(memberId: Long) = "<untrusted>"\n');
+  await expect(preview.locator("table").first()).toContainText("Duplicate request");
+  await expect(preview.locator("pre code").filter({ hasText: "fun grant" })).toHaveText('fun grant(memberId: Long) = "<untrusted>"\n');
   await expect(preview.locator('input[type="checkbox"]').first()).toBeChecked();
   await expect(preview.locator('input[type="checkbox"]').last()).toBeDisabled();
-  await expect(preview.locator("script, img, iframe, button, [data-action], [onclick], [onerror]")).toHaveCount(0);
+  await expect(preview.locator('script, iframe, button, [data-action], [onclick], [onerror], img[src^="http"]')).toHaveCount(0);
+  await expect(preview.locator(".mermaid-diagram")).toHaveCount(5);
+  await expect(preview.locator(".mermaid-output img")).toHaveCount(3);
+  await expect.poll(() => preview.locator(".mermaid-output img").evaluateAll(images => images.every(image => (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
+  assert(await preview.locator(".mermaid-output img").first().evaluate(image => {
+    const svg = new DOMParser().parseFromString(decodeURIComponent((image as HTMLImageElement).src.split(",").slice(1).join(",")), "image/svg+xml").documentElement as unknown as SVGSVGElement;
+    const holder = document.createElement("div"); document.body.append(holder);
+    holder.attachShadow({ mode: "open" }).append(svg);
+    const bounds = svg.getBBox(), box = svg.viewBox.baseVal;
+    const contained = bounds.x >= box.x - 1 && bounds.y >= box.y - 1 && bounds.x + bounds.width <= box.x + box.width + 1 && bounds.y + bounds.height <= box.y + box.height + 1;
+    holder.remove(); return contained;
+  }), "App node transitions must not clip diagram nodes during export");
+  await expect(preview.locator(".mermaid-status")).toHaveCount(2);
+  await expect(preview.locator(".mermaid-diagram").nth(3).locator("details")).toHaveAttribute("open", "");
+  await expect(page.locator(".mermaid-render-host")).toHaveCount(0);
   await expect(preview.getByText("Unsafe link", { exact: true })).not.toHaveAttribute("href");
   await expect(preview.getByText("Injected link", { exact: true })).not.toHaveAttribute("href");
   await expect(preview.getByRole("link", { name: "Official documentation" })).toHaveAttribute("rel", "noopener noreferrer");
@@ -99,6 +125,8 @@ test("Plan documents render safely and open in a responsive reader without appro
   await expect(dialog).toBeVisible();
   await expect.poll(async () => (await dialog.boundingBox())!.width).toBeGreaterThanOrEqual(1000);
   await expect(dialog.locator(".markdown-body h1")).toHaveText("구현 계획 - New task");
+  await expect(dialog.locator(".mermaid-output img")).toHaveCount(3);
+  assert(await dialog.locator(".mermaid-output img").evaluateAll(images => images.every(image => image.clientWidth <= (image as HTMLImageElement).naturalWidth + 1)), "Small diagrams must not stretch to fill the reader");
   await dialog.getByRole("button", { name: "원문", exact: true }).click();
   await expect(dialog.locator(".document-preview")).toBeHidden();
   assert.equal(await dialog.locator(".document-source").textContent(), content);
@@ -138,6 +166,7 @@ test("Plan documents render safely and open in a responsive reader without appro
   await expect(page.locator(".evidence-body pre")).toHaveText(artifacts[2].content);
   await expect(page.locator(".evidence-body .markdown-body")).toHaveCount(0);
   assert.equal(await page.evaluate(() => (window as any).documentAttack), undefined);
+  assert.deepEqual(external, []);
   assert.deepEqual(unexpected, []); assert.deepEqual(errors, []);
   assert.equal(settingsWrites, 1, "Only the existing startup settings save is allowed");
   assert.equal(run.status, "waiting_review"); assert.equal(run.steps[1].status, "queued");

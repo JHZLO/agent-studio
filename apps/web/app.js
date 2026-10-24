@@ -6,7 +6,7 @@ import "./skills.js";
 import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js";
 import { enhanceSelects, closeSelects } from "./selects.js";
 import { sessionTiming, formatDuration } from "./session-time.js";
-import { isMarkdown, renderMarkdown } from "./markdown.js";
+import { isMarkdown, renderMarkdown, renderDiagrams } from "./markdown.js";
 import "./markdown.css";
 (() => {
   "use strict";
@@ -288,6 +288,7 @@ import "./markdown.css";
       if (next && next.dataset.id === panel.dataset.id) next.replaceWith(panel);
     }
     enhanceSelects(app);
+    renderDiagrams(app);
     for (const [className, scrollTop, scrollLeft] of scrollPositions) {
       const element = document.getElementsByClassName(className)[0];
       if (element) { element.scrollTop = scrollTop; element.scrollLeft = scrollLeft; }
@@ -749,6 +750,7 @@ import "./markdown.css";
     modal.innerHTML = html`<div class="modal-head"><div>${eyebrow ? html`<div class="eyebrow">${eyebrow}</div>` : ""}<h2 id="modal-title">${title}</h2></div>${button("close-modal", "", "close", "text icon-only", attrs`aria-label="Close dialog"`)}</div><div class="modal-body">${body}</div>${footer ? html`<div class="modal-footer">${footer}</div>` : ""}`;
     enhanceSelects(modal);
     if (!modal.open) modal.showModal();
+    renderDiagrams(modal);
     if (focusedId) modal.querySelector(`#${CSS.escape(focusedId)}`)?.focus({ preventScroll: true });
     if (!modal.contains(document.activeElement)) modal.querySelector("button, input, select, textarea")?.focus();
   }

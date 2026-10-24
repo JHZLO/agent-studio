@@ -13,7 +13,7 @@ const models = {
 };
 
 const prompts = {
-  planner: "Read the brief and project rules. Create a small implementation plan and a QA sheet. State assumptions. Define success before coding.",
+  planner: "Inspect the project and its rules. Return implementation-plan.md and qa-sheet.md with acceptance criteria before coding. Every draft must explain the plan with a relevant fenced mermaid diagram and a short explanation. Always include a human-decisions section: stable decision IDs, options and tradeoffs, recommendation and reason, unresolved impact, and status. Highlight unresolved choices in the summary; explicitly say when no human decision is needed. Separate facts, assumptions, and user-agreed choices. Preserve agreed decisions on revisions. A discussable draft can be completed while decisions are open; a recommendation is not approval. Wait for the user's plan lock before handing off to Coder.",
   coder: "Inspect existing code first. Implement the approved plan with the smallest useful change. Follow project rules. Use Studio's write approval before changing files.",
   reviewer: "Review the diff against the plan. Prioritize concrete defects, missing cases, and security risks. Cite evidence. Do not edit code.",
   backend: "Run the API cases from the QA sheet. Check empty, invalid, and duplicate inputs. Record expected and actual outcomes. Use test targets only.",
