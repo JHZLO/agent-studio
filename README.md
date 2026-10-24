@@ -45,6 +45,18 @@ Instructions use the agent's frozen permissions and skills. They cannot bypass a
 
 Pending instructions survive a page reload. If the runner restarts or cannot confirm a stop, Studio holds the task for inspection and does not replay commands. Inspect the provider and project before cancelling that interrupted task and starting a new conversation.
 
+## Branches and joins
+
+In **Flows**, connect an output to multiple inputs, or select an agent and check its **Next agents**. Uncheck a target to remove its connection. A join starts after all connected predecessors have completed and their human reviews are approved. Ordinary connections cannot form cycles; use the existing bounded revision rules for a return path. **Parallel agents** limits a flow to 1-8 simultaneous role turns, independently of the workspace's concurrent-task limit.
+
+Graph runs capture the selected project's source in a private local Git repository. Each agent receives an isolated working folder based on its predecessors' saved results. Existing tracked and visible untracked source files are included. Dependency folders, generated output, secret paths and symlinks are excluded. Agents must prepare dependencies and test servers inside their working folder when needed. Your source repository's branches, index and commit history are not used for these private snapshots.
+
+At a join, Studio combines the predecessor changes. Contributors inspect the actual combined version and return explicit pass or revise decisions. QA contributors with execution tools must record execution evidence against that version. A writable contributor or upstream agent resolves conflicts and disagreements using its frozen permissions. Every contributor must agree on the same file version. After three unsuccessful rounds, Studio requests human revision instead of silently choosing a result. Merge conversations, votes, branch changes and inspection receipts remain available in the task UI.
+
+After all branches and reviews finish, Studio applies the combined patch to the task's original working folder. If that folder changed during execution, publication stops for inspection. Private workspaces remain available with the task's evidence. A graph session's later follow-up edits remain in its branch and require another review and merge; they do not silently overwrite the original project. Merge sessions accept live instructions while running; later follow-ups use the original agent session.
+
+Each running branch has its own message queue, interrupt state, provider session, permission requests and conversation. **Handoff** shows its working folder, and the fullscreen source reader follows the selected branch. Revisions invalidate only the target and its dependent branches. Existing flows and runs without saved graph connections retain their sequential behavior.
+
 ## Parallel child agents
 
 Open **Agent library > Edit agent > Parallel delegation**. Enable child agents, choose their saved presets, and set a concurrency limit from 1 to 3. Existing presets keep delegation disabled. Changes apply to new tasks; a running task retains its frozen instructions, models, skills, and permissions.
@@ -131,7 +143,7 @@ Changes to an approved plan require another human review. Approval checks the re
 
 - Project registration, folder browsing, branch validation, local execution, and real worktree creation.
 - Selective import of local Codex and Claude Code project folders, with deduplication and access to previously imported conversation snapshots.
-- Multiple flows with create, rename, duplicate, archive, restore, node ordering, port connection previews, zoom, and JSON export.
+- Multiple flows with create, rename, duplicate, archive, restore, node ordering, fan-out connections, joins, isolated parallel branches, merge agreement, zoom, and JSON export.
 - Six role presets with editable prompts, provider, model, tool permissions, and local skill bindings.
 - A local skill catalog with search, source folders, version checks, frozen snapshots, and previous-run inspection.
 - Real execution, approval, pause at a step boundary, resume, cancel, history, and persisted settings.
