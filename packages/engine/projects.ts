@@ -1,6 +1,7 @@
-import { realpath, stat, readdir, mkdir, readFile } from "node:fs/promises";
+import { realpath, stat, readdir, mkdir, readFile, lstat, open } from "node:fs/promises";
+import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, dirname, basename, relative } from "node:path";
+import { isAbsolute, join, dirname, basename, relative, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Project } from "../contracts/index.ts";
@@ -8,6 +9,50 @@ import { executionSchema } from "../contracts/index.ts";
 const exec = promisify(execFile);
 export const expand = (raw: string) => raw === "~" ? homedir() : raw.startsWith("~/") ? join(homedir(), raw.slice(2)) : raw;
 export const contained = (root: string, path: string) => { const rel = relative(root, path); return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)); };
+export const secretPath = (path: string) => path.split(/[\\/]/).some(part => /^\.(git|env|ssh|aws|gnupg|codex|claude|local)$/.test(part) || /^\.env[.]/.test(part) || /(?:credentials|private[._-]?key|\.pem$|\.key$)/i.test(part));
+const hiddenProjectPath = (path: string) => secretPath(path) || path.split(/[\\/]/).some(part => (part.startsWith(".") && part !== ".") || ["node_modules", "target", "dist", "build", "coverage"].includes(part));
+
+async function projectEntry(cwd: string, raw: string) {
+  if (typeof raw !== "string" || !raw || raw.length > 4096 || isAbsolute(raw) || hiddenProjectPath(raw)) throw new Error("Choose a visible file inside this task's project.");
+  const root = await realpath(cwd), target = await realpath(resolve(root, raw));
+  if (!contained(root, target) || hiddenProjectPath(relative(root, target)) || (await lstat(resolve(root, raw))).isSymbolicLink()) throw new Error("Files must stay inside this task's project without symlinks.");
+  return { root, target };
+}
+
+export async function projectFiles(cwd: string, path = ".") {
+  const { root, target } = await projectEntry(cwd, path);
+  const entries = await readdir(target, { withFileTypes: true });
+  const visible = entries.filter(entry => !hiddenProjectPath(entry.name) && !entry.isSymbolicLink() && (entry.isDirectory() || entry.isFile()));
+  if (visible.length > 1000) throw new Error("This folder has too many entries to display. Open a smaller folder.");
+  return {
+    path: relative(root, target) || ".", parent: target === root ? null : relative(root, dirname(target)) || ".",
+    entries: visible.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name)).map(entry => ({ name: entry.name, path: relative(root, join(target, entry.name)), directory: entry.isDirectory() })),
+  };
+}
+
+export async function readProjectFile(cwd: string, path: string) {
+  const { root, target } = await projectEntry(cwd, path);
+  const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const info = await file.stat(), limit = 256 * 1024;
+    if (!info.isFile()) throw new Error("Choose a regular text file.");
+    if (info.size > limit) throw new Error("Preview supports text files up to 256 KB.");
+    const buffer = Buffer.alloc(limit + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const read = await file.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+      if (!read.bytesRead) break;
+      bytesRead += read.bytesRead;
+    }
+    if (bytesRead > limit) throw new Error("Preview supports text files up to 256 KB.");
+    const bytes = buffer.subarray(0, bytesRead);
+    if (bytes.includes(0)) throw new Error("Preview supports UTF-8 text files.");
+    let content: string;
+    try { content = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+    catch { throw new Error("Preview supports UTF-8 text files."); }
+    return { path: relative(root, target), content, modifiedAt: info.mtime.toISOString() };
+  } finally { await file.close(); }
+}
 export async function projectInstructions(cwd: string, source: string) {
   const rules: string[] = [];
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {

@@ -29,6 +29,7 @@ import "./session-focus.css";
   const ui = {
     view: "home", selected: null, artifactId: null, pendingOrder: null,
     expandedRunId: null, openArtifacts: [], artifactFormat: "preview", focusPane: "conversation", focusSplit: 44, focusScroll: 0,
+    sourceDocuments: [], fileBrowser: null, fileBrowserActive: false, fileLoading: false, fileError: "", fileRequest: 0,
     sessionTab: "conversation", reviewDraft: "", reviewId: null, step: 0, followRun: true, historyId: null,
     linkFrom: null, zoom: null, connectProvider: "codex", connectAuth: "subscription",
     skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", editingAgentId: null, starting: false,
@@ -268,12 +269,14 @@ import "./session-focus.css";
   let sessionClockTimer;
 
   function render(live = false) {
-    if (ui.view !== "run" || currentRun()?.id !== ui.expandedRunId) ui.expandedRunId = null;
+    if (ui.expandedRunId && (ui.view !== "run" || currentRun()?.id !== ui.expandedRunId)) {
+      ui.expandedRunId = null; ui.fileRequest++; ui.fileLoading = false; ui.fileError = "";
+    }
     document.body.classList.toggle("session-expanded", !!ui.expandedRunId);
     closeSelects(app);
     const retainedTerminal = ui.view === "run" && ui.sessionTab === "terminal" ? retainTerminal() : null;
     const focused = document.activeElement;
-    const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "data-pane", "data-format", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
+    const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "data-pane", "data-format", "data-path", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
     const preserved = live ? [document.getElementById("task-brief"), document.getElementById("flow-rule-form"), document.getElementById("review-feedback"), document.getElementById("focus-document")] : [];
     const scrollPositions = live ? [...document.querySelectorAll(".session-content, .evidence-body, .run-steps, .canvas-viewport, .sidebar, .nav")].map(element => [element.className, element.scrollTop, element.scrollLeft]) : [];
     const viewNames = { home: "New task", team: "Flows", run: "Task details", agents: "Agent library", skills: "Skill library", connections: "AI connections", runs: "Tasks", imported: "Imported sessions", defaults: "Workspace defaults" };
@@ -736,6 +739,7 @@ import "./session-focus.css";
     const run = currentRun();
     if (!run) return;
     if (ui.expandedRunId) {
+      ui.fileRequest++; ui.fileLoading = false; ui.fileError = "";
       ui.expandedRunId = null;
       if (ui.sessionTab === "conversation" && ui.focusReturnTab === "review") ui.sessionTab = "review";
       render(true);
@@ -747,8 +751,9 @@ import "./session-focus.css";
     ui.focusReturnTab = ui.sessionTab;
     if (ui.sessionTab === "review") ui.sessionTab = "conversation";
     ui.focusPane = "conversation";
-    ui.openArtifacts = ui.openArtifacts.filter(id => run.artifacts.some(a => a.id === id));
-    const artifact = run.artifacts.find(a => a.id === ui.artifactId) || run.artifacts.find(a => a.id === run.review?.artifactIds[0]) || run.artifacts.find(a => a.stepId === run.steps[ui.step]?.id && !a.superseded && !a.stale) || run.artifacts.find(a => !a.superseded && !a.stale);
+    ui.openArtifacts = ui.openArtifacts.filter(id => focusedDocument(run, id));
+    ui.fileBrowserActive = false;
+    const artifact = focusedDocument(run, ui.artifactId) || run.artifacts.find(a => a.id === run.review?.artifactIds[0]) || run.artifacts.find(a => a.stepId === run.steps[ui.step]?.id && !a.superseded && !a.stale) || run.artifacts.find(a => !a.superseded && !a.stale);
     ui.artifactId = artifact?.id || null;
     if (artifact && !ui.openArtifacts.includes(artifact.id)) ui.openArtifacts.push(artifact.id);
     render(true);
@@ -760,7 +765,8 @@ import "./session-focus.css";
   }
 
   function openArtifact(id) {
-    if (!findArtifact(id)) return;
+    if (!focusedDocument(currentRun(), id)) return;
+    ui.fileRequest++; ui.fileLoading = false; ui.fileError = ""; ui.fileBrowserActive = false;
     ui.artifactId = id;
     if (ui.expandedRunId) {
       if (!ui.openArtifacts.includes(id)) ui.openArtifacts.push(id);
@@ -770,11 +776,50 @@ import "./session-focus.css";
     app.querySelector(".evidence-body")?.scrollTo(0, 0);
   }
 
+  function focusedDocument(run, id) {
+    return run?.artifacts.find(item => item.id === id) || ui.sourceDocuments.find(item => item.runId === run?.id && item.id === id);
+  }
+
+  async function loadProjectFiles(path) {
+    const run = currentRun(); if (!run) return;
+    path ??= ui.fileBrowser?.runId === run.id ? ui.fileBrowser.path : ".";
+    const requestId = ++ui.fileRequest;
+    ui.fileBrowserActive = true; ui.artifactId = null; ui.focusPane = "document"; ui.fileLoading = true; ui.fileError = "";
+    ui.fileBrowser = { runId: run.id, path, parent: path === "." ? null : ".", entries: [] };
+    render(true);
+    try {
+      const result = await request("/api/runs/files", { id: run.id, path });
+      if (requestId === ui.fileRequest && ui.expandedRunId === run.id) ui.fileBrowser = { ...result, runId: run.id };
+    } catch (error) { if (requestId === ui.fileRequest) ui.fileError = error.message; }
+    finally { if (requestId === ui.fileRequest) { ui.fileLoading = false; render(true); } }
+  }
+
+  async function openProjectFile(path) {
+    const run = currentRun(); if (!run) return;
+    const requestId = ++ui.fileRequest;
+    ui.fileLoading = true; ui.fileError = ""; render(true);
+    try {
+      const file = await request("/api/runs/file", { id: run.id, path });
+      if (requestId !== ui.fileRequest || ui.expandedRunId !== run.id) return;
+      const id = `source:${run.id}:${encodeURIComponent(file.path)}`;
+      const document = { id, runId: run.id, sourcePath: file.path, name: file.path, content: file.content, type: "Current file", agent: run.project.name, loadedAt: Date.now() };
+      ui.sourceDocuments = [...ui.sourceDocuments.filter(item => item.id !== id), document];
+      openArtifact(id);
+      app.querySelector(".focus-file-tab[aria-selected=true]")?.focus({ preventScroll: true });
+    } catch (error) { if (requestId === ui.fileRequest) ui.fileError = error.message; }
+    finally { if (requestId === ui.fileRequest) { ui.fileLoading = false; render(true); } }
+  }
+
+  function projectFilesView(run) {
+    const directory = ui.fileBrowser?.runId === run.id ? ui.fileBrowser : { path: ".", parent: null, entries: [] };
+    return html`<div class="evidence-body project-files"><h3>Project files</h3><p class="meta">Read the current files in this task's working folder. Files may differ from recorded outputs.</p><div class="project-files-path">${button("project-files", "Project root", "folder", "text small", 'data-path="."')}<code>${escape(directory.path)}</code>${button("project-files", "Refresh", "reset", "small", `data-path="${escape(directory.path)}"`)}</div>${directory.parent !== null ? button("project-files", "Parent folder", "arrow", "text small back-button", `data-path="${escape(directory.parent)}"`) : ""}<div class="project-file-list">${directory.entries.map(entry => html`<button data-action="${entry.directory ? "project-files" : "project-file"}" data-path="${escape(entry.path)}" class="project-file-row">${icon(entry.directory ? "folder" : "file")}<span>${escape(entry.name)}</span>${entry.directory ? icon("chevron") : ""}</button>`).join("") || (!ui.fileLoading && !ui.fileError ? html`<p class="meta">No visible source files in this folder.</p>` : "")}</div></div>`;
+  }
+
   function focusedEvidenceView(run) {
-    const artifact = run.artifacts.find(a => a.id === ui.artifactId);
-    const tabs = ui.openArtifacts.map(id => run.artifacts.find(a => a.id === id)).filter(Boolean);
+    const artifact = ui.fileBrowserActive ? null : focusedDocument(run, ui.artifactId);
+    const tabs = ui.openArtifacts.map(id => focusedDocument(run, id)).filter(Boolean);
     const markdown = artifact && isMarkdown(artifact);
-    return html`<aside class="evidence-panel focused-evidence" aria-label="Task outputs"><div class="focus-files-bar">${button("all-outputs", "Outputs", "folder", "small focus-output-list", `aria-pressed="${!artifact}"`)}<div class="focus-files" role="tablist" aria-label="Open documents">${tabs.map(item => html`<div class="focus-file${item.id === artifact?.id ? " active" : ""}"><button class="focus-file-tab" role="tab" id="file-tab-${escape(item.id)}" aria-controls="focus-document" aria-selected="${item.id === artifact?.id}" tabindex="${item.id === artifact?.id || (!artifact && item === tabs[0]) ? 0 : -1}" data-action="artifact" data-id="${escape(item.id)}" title="${escape(item.name)}">${icon(item.type === "Code diff" ? "code" : "file")}${escape(item.name)}</button>${button("close-artifact", "", "close", "text icon-only", attrs`data-id="${escape(item.id)}" aria-label="Close ${escape(item.name)}"`)}</div>`).join("")}</div></div>${artifact ? html`<div class="focus-document-toolbar"><div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${artifact.superseded ? t("Previous attempt") : escape(t(artifact.type))}</p></div><div class="focus-document-actions">${markdown ? html`<div class="segment" role="group" aria-label="Document format">${[["preview", "Preview"], ["source", "Markdown source"]].map(([format, label]) => html`<button data-action="focus-format" data-format="${format}" class="${ui.artifactFormat === format ? "active" : ""}" aria-pressed="${ui.artifactFormat === format}">${t(label)}</button>`).join("")}</div>` : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div></div><div id="focus-document" class="evidence-body focus-document-content" data-id="${escape(run.id)}:${escape(artifact.id)}:${ui.artifactFormat}" role="tabpanel" aria-labelledby="file-tab-${escape(artifact.id)}" tabindex="0">${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : markdown && ui.artifactFormat !== "source" ? artifactPreview(artifact) : sourcePreview(artifact)}</div>` : html`<div class="evidence-body"><h3>Outputs</h3><p class="meta">Choose a document to read alongside the conversation.</p>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output">${icon("file")}<span>Waiting for the first output<small>Outputs appear here when an agent produces them.</small></span></div>`}</div>`}</aside>`;
+    return html`<aside class="evidence-panel focused-evidence" aria-label="Task outputs"><div class="focus-files-bar">${button("all-outputs", "Outputs", "folder", "small focus-output-list", `aria-pressed="${!artifact && !ui.fileBrowserActive}"`)}${button("project-files", "Project files", "code", "small focus-output-list", `aria-pressed="${ui.fileBrowserActive}"`)}<div class="focus-files" role="tablist" aria-label="Open documents">${tabs.map(item => html`<div class="focus-file${item.id === artifact?.id ? " active" : ""}"><button class="focus-file-tab" role="tab" id="file-tab-${escape(item.id)}" aria-controls="focus-document" aria-selected="${item.id === artifact?.id}" tabindex="${item.id === artifact?.id || (!artifact && item === tabs[0]) ? 0 : -1}" data-action="artifact" data-id="${escape(item.id)}" title="${escape(item.name)}" aria-label="${escape(item.name)}">${icon(item.sourcePath || item.type === "Code diff" ? "code" : "file")}${escape(item.sourcePath ? item.name.split(/[\\/]/).at(-1) : item.name)}</button>${button("close-artifact", "", "close", "text icon-only", attrs`data-id="${escape(item.id)}" aria-label="Close ${escape(item.name)}"`)}</div>`).join("")}</div></div>${ui.fileLoading ? html`<p class="focus-file-status" role="status">Loading project files...</p>` : ""}${ui.fileError ? html`<p class="focus-file-status" role="alert">${escape(t(ui.fileError))}</p>` : ""}${ui.fileBrowserActive ? projectFilesView(run) : artifact ? html`<div class="focus-document-toolbar"><div><h3>${escape(artifact.name)}</h3><p class="meta">${escape(artifact.agent)} / ${artifact.superseded ? t("Previous attempt") : escape(t(artifact.type))}</p></div><div class="focus-document-actions">${markdown ? html`<div class="segment" role="group" aria-label="Document format">${[["preview", "Preview"], ["source", "Markdown source"]].map(([format, label]) => html`<button data-action="focus-format" data-format="${format}" class="${ui.artifactFormat === format ? "active" : ""}" aria-pressed="${ui.artifactFormat === format}">${t(label)}</button>`).join("")}</div>` : ""}${artifact.sourcePath ? button("project-file", "", "reset", "text icon-only", attrs`data-path="${escape(artifact.sourcePath)}" aria-label="Reload current file"`) : ""}${button("download-artifact", "", "download", "text icon-only", attrs`data-id="${escape(artifact.id)}" aria-label="Download ${escape(artifact.name)}"`)}</div></div><div id="focus-document" class="evidence-body focus-document-content" data-id="${escape(run.id)}:${escape(artifact.id)}:${ui.artifactFormat}:${artifact.loadedAt || ""}" role="tabpanel" aria-labelledby="file-tab-${escape(artifact.id)}" tabindex="0">${artifact.mime === "image/png" ? html`<img class="artifact-image" src="/api/artifacts/${run.id}/${artifact.id}" alt="${escape(artifact.name)}">` : markdown && ui.artifactFormat !== "source" ? artifactPreview(artifact) : sourcePreview(artifact)}</div>` : html`<div class="evidence-body"><h3>Outputs</h3><p class="meta">Choose a document to read alongside the conversation.</p>${run.artifacts.length ? html`<div class="artifact-list">${run.artifacts.map(artifactRow).join("")}</div>` : html`<div class="expected-output">${icon("file")}<span>Waiting for the first output<small>Outputs appear here when an agent produces them.</small></span></div>`}</div>`}</aside>`;
   }
 
   function sourcePreview(artifact) {
@@ -1169,13 +1214,16 @@ import "./session-focus.css";
     else if (action === "configure-agent") editAgent(id);
     else if (action === "select-agent") { ui.selected = id; render(); if (matchMedia("(max-width: 880px)").matches) document.querySelector(".inspector")?.scrollIntoView({ block: "nearest" }); }
     else if (action === "close-inspector") { ui.selected = null; render(); }
-    else if (action === "all-outputs") { ui.artifactId = null; ui.focusPane = "document"; render(true); }
+    else if (action === "all-outputs") { ui.fileRequest++; ui.fileBrowserActive = false; ui.fileLoading = false; ui.fileError = ""; ui.artifactId = null; ui.focusPane = "document"; render(true); }
+    else if (action === "project-files") await loadProjectFiles(target.dataset.path);
+    else if (action === "project-file") await openProjectFile(target.dataset.path);
     else if (action === "session-fullscreen") toggleSessionFullscreen();
     else if (action === "focus-pane") { ui.focusPane = target.dataset.pane; render(true); }
     else if (action === "focus-format") { ui.artifactFormat = target.dataset.format; render(true); app.querySelector(".focus-document-content")?.scrollTo(0, 0); }
     else if (action === "close-artifact") {
       const index = ui.openArtifacts.indexOf(id);
       ui.openArtifacts = ui.openArtifacts.filter(value => value !== id);
+      ui.sourceDocuments = ui.sourceDocuments.filter(item => item.id !== id);
       if (ui.artifactId === id) ui.artifactId = ui.openArtifacts[Math.min(index, ui.openArtifacts.length - 1)] || null;
       render(true); app.querySelector(".focus-file-tab[aria-selected=true], .focus-output-list")?.focus({ preventScroll: true });
     }
@@ -1380,7 +1428,7 @@ import "./session-focus.css";
     }
     else if (action === "artifact") {
       const artifact = findArtifact(id);
-      if (artifact) openArtifact(id);
+      if (artifact || focusedDocument(currentRun(), id)) openArtifact(id);
     }
     else if (action === "open-document") openDocument(id);
     else if (action === "document-format") {
@@ -1394,7 +1442,7 @@ import "./session-focus.css";
         option.setAttribute("aria-pressed", String(active));
       }
     }
-    else if (action === "download-artifact") { const artifact = findArtifact(id); if (artifact?.mime) { const link = document.createElement("a"); link.href = `/api/artifacts/${currentRun().id}/${artifact.id}`; link.download = artifact.name; link.click(); } else if (artifact) download(artifact.name, artifact.content); }
+    else if (action === "download-artifact") { const artifact = focusedDocument(currentRun(), id) || findArtifact(id); if (artifact?.mime) { const link = document.createElement("a"); link.href = `/api/artifacts/${currentRun().id}/${artifact.id}`; link.download = artifact.name; link.click(); } else if (artifact) download(artifact.name, artifact.content); }
     else if (action === "export") download("agent-studio-workflow.json", JSON.stringify({ version: 1, name: currentFlow().name, workflow: currentFlow().workflow, rules: currentFlow().rules || [], revision: currentFlow().revision || 1, agents: state.agents.filter(agent => currentFlow().workflow.includes(agent.id)).map(({ skills, ...agent }) => agent), brief: state.brief, approvalRequired: state.approvalRequired }, null, 2), "application/json");
     else if (action === "reset") {
       if (ui.navigationOpen) closeNavigation();

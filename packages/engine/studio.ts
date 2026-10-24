@@ -9,7 +9,7 @@ import { initialState } from "../contracts/defaults.js";
 import { settingsSchema, activeStatuses, now, type Run, type Step, type Settings, type Approval, type ImportedSession, type FlowReview, type Project } from "../contracts/index.ts";
 import { Store, hash } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
-import { folders, inspectProject, prepareProject, projectInstructions, git, contained } from "./projects.ts";
+import { folders, inspectProject, prepareProject, projectInstructions, projectFiles, readProjectFile, git, contained } from "./projects.ts";
 import { Connections } from "./connections.ts";
 import { CodexHost, RpcError, accountFingerprint, claudeBinary, runtimeLoader, runtimeEnvironment, supportsFastMode, type Wire } from "./codex.ts";
 import { Toolbox, toolSpecs, enabledTools, codeReference, type Receipt } from "./tools.ts";
@@ -116,6 +116,13 @@ export class Studio {
     }
     if (method === "run.start") return this.start(input);
     if (method === "run.read") return this.getRun(input.id);
+    if (method === "run.files" || method === "run.file") {
+      const { id, path } = z.object({ id: z.string().min(1), path: z.string().min(1).max(4096).default(".") }).parse(input);
+      const run = this.getRun(id);
+      if (method === "run.files") return projectFiles(run.cwd, path);
+      const file = await readProjectFile(run.cwd, path);
+      return { ...file, content: this.connections.redact(file.content) };
+    }
     if (method === "run.control") return this.control(input);
     if (method === "run.reconcile") return this.reconcile(input.id);
     if (method.startsWith("terminal.")) return this.terminal(method, input);

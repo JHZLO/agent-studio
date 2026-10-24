@@ -43,6 +43,16 @@ body.session-expanded { overflow: hidden; }
 .focus-output-list { flex: none; padding: 7px 10px; }
 .focus-output-list[aria-pressed="true"] { background: var(--lavender); }
 .focus-files { display: flex; gap: 5px; min-width: 0; overflow-x: auto; }
+.focus-file-status { flex: none; padding: 10px 18px; margin: 0; font-size: 12px; background: var(--cream); overflow-wrap: anywhere; }
+.focus-file-status[role="alert"] { color: var(--rose-ink); }
+.project-files h3 { font-size: 17px; }
+.project-files-path { display: flex; align-items: center; gap: 8px; margin-block: 14px; }
+.project-files-path code { flex: 1; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.project-file-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.project-file-row { display: flex; gap: 10px; align-items: center; width: 100%; padding: 10px; background: var(--paper); color: var(--ink); text-align: left; border: 1px solid var(--line-2); border-radius: 9px; }
+.project-file-row:hover { background: var(--cream); }
+.project-file-row svg { flex: none; width: 17px; height: 17px; }
+.project-file-row span { flex: 1; min-width: 0; font: 12px/1.5 var(--font-mono); overflow-wrap: anywhere; }
 .focus-file { flex: none; display: flex; align-items: center; border: 1px solid transparent; border-radius: 10px; }
 .focus-file.active { border-color: var(--line-2); background: var(--paper); }
 .focus-file-tab { display: flex; align-items: center; gap: 7px; max-width: 230px; padding: 8px; border: 0; background: none; color: var(--ink-2); font: 600 11px/1.5 var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

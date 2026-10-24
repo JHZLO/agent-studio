@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
 import { chromium, type Browser, type Page } from "@playwright/test";
 import { z } from "zod";
-import { contained, git } from "./projects.ts";
+import { contained, git, secretPath } from "./projects.ts";
 import { hash } from "./store.ts";
 import { codexBinary, runtimeEnvironment, root, type Wire } from "./codex.ts";
 import type { Run, Step, Artifact } from "../contracts/index.ts";
@@ -26,7 +26,6 @@ const specs = [
 ] as const;
 export const enabledTools = (step: Step) => step.agent.tools.filter(tool => step.agent.permissionLevel !== "read-only" || tool === "read");
 export const toolSpecs = (step: Step) => specs.filter(spec => enabledTools(step).includes(spec.permission)).map(({ permission, ...spec }) => ({ type: "function", ...spec }));
-const secretPath = (path: string) => path.split(/[\\/]/).some(part => /^\.(git|env|ssh|aws|gnupg|codex|claude|local)$/.test(part) || /^\.env[.]/.test(part) || /(?:credentials|private[._-]?key|\.pem$|\.key$)/i.test(part));
 
 export async function codeReference(cwd: string) {
   const head = await git(cwd, ["rev-parse", "--verify", "HEAD"]);

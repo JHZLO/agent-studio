@@ -29,10 +29,24 @@ test("Fullscreen sessions keep conversations, review drafts and documents togeth
   };
   const state = { ...settings, connections: [], revision: 1, eventSeq: 1, run, activeRuns: [run], history: [], importedSessions: [] };
   const streams = new Set<ServerResponse>(), commands: Record<string, unknown>[] = [], errors: string[] = [];
+  let sourceContent = "export const value = 1;", releaseSource!: () => void;
+  const sourceGate = new Promise<void>(resolve => { releaseSource = resolve; });
   const server = createServer(async (req, res) => {
     try {
       const path = new URL(req.url!, "http://localhost").pathname;
       if (path === "/api/events") { res.writeHead(200, { "Content-Type": "text/event-stream" }); res.write(": connected\n\n"); streams.add(res); req.on("close", () => streams.delete(res)); return; }
+      if (path === "/api/runs/files" || path === "/api/runs/file") {
+        let body = ""; for await (const chunk of req) body += chunk;
+        const input = JSON.parse(body); assert.equal(input.id, run.id);
+        if (path.endsWith("/files")) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(input.path === "." ? { path: ".", parent: null, entries: [{ name: "src", path: "src", directory: true }] }
+            : { path: "src", parent: ".", entries: ["service.ts", "slow.ts", "binary.dat"].map(name => ({ name, path: `src/${name}`, directory: false })) })); return;
+        }
+        if (input.path === "src/binary.dat") { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "Preview supports UTF-8 text files." })); return; }
+        if (input.path === "src/slow.ts") await sourceGate;
+        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ path: input.path, content: sourceContent, modifiedAt: new Date().toISOString() })); return;
+      }
       if (path === "/api/runs/control") {
         let body = ""; for await (const chunk of req) body += chunk;
         const command = JSON.parse(body); commands.push(command);
@@ -117,6 +131,24 @@ test("Fullscreen sessions keep conversations, review drafts and documents togeth
   await expect(feedback).toHaveValue("D1은 기존 결과를 반환하는 방식으로 수정해 주세요.");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "전체화면", exact: true }).click();
+  await page.getByRole("button", { name: "프로젝트 파일", exact: true }).click();
+  await page.getByRole("button", { name: "src", exact: true }).click();
+  await page.getByRole("button", { name: "service.ts", exact: true }).click();
+  await expect(page.locator("#focus-document code")).toHaveText(sourceContent);
+  await expect(page.getByRole("tab", { name: "src/service.ts", exact: true })).toHaveAttribute("aria-selected", "true");
+  sourceContent = "export const value = 2;";
+  await page.getByRole("button", { name: "현재 파일 다시 읽기", exact: true }).click();
+  await expect(page.locator("#focus-document code")).toHaveText(sourceContent);
+  await page.getByRole("button", { name: "프로젝트 파일", exact: true }).click();
+  await page.getByRole("button", { name: "binary.dat", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("UTF-8 텍스트 파일을 미리 볼 수 있습니다.");
+  const delayedResponse = page.waitForResponse(response => response.url().endsWith("/api/runs/file") && response.request().postDataJSON().path === "src/slow.ts");
+  await page.getByRole("button", { name: "slow.ts", exact: true }).click();
+  await page.getByRole("tab", { name: "implementation-plan.md", exact: true }).click();
+  releaseSource(); await delayedResponse;
+  await expect(page.getByRole("tab", { name: "implementation-plan.md", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "src/slow.ts", exact: true })).toHaveCount(0);
+  await expect(feedback).toHaveValue("D1은 기존 결과를 반환하는 방식으로 수정해 주세요.");
   await page.getByRole("button", { name: "산출물", exact: true }).click();
   await page.locator('.focused-evidence [data-action="artifact"][data-id="json"]').click();
   await expect(page.locator("#focus-document script")).toHaveCount(0);
