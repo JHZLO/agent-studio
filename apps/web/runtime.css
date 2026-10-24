@@ -63,3 +63,39 @@ dialog[open].import-dialog { display: flex; flex-direction: column; overflow: hi
 .import-conversation { max-height: 55vh; overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
 .import-message { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.7; margin-top: 8px; }
 @media (max-width: 600px) { .import-filters { grid-template-columns: 1fr; } }
+
+.wait-state { display: grid; justify-items: center; gap: 22px; padding: 32px 24px; text-align: center; border: 1.5px dashed var(--line-2); border-radius: 22px; background: var(--paper); }
+.wait-state.compact { padding: 24px 18px; gap: 16px; }
+.wait-crew { display: flex; align-items: flex-end; justify-content: center; height: 62px; gap: 7px; padding-top: 10px; }
+.wait-crew i { position: relative; display: block; width: 48px; height: 48px; border: 1.5px solid var(--ink); border-radius: 48% 52% 38% 42%; background: var(--lavender); box-shadow: 3px 3px 0 var(--line); animation: wait-hop 1.4s ease-in-out infinite; }
+.wait-crew i:nth-child(2) { background: var(--mint); animation-delay: .18s; }
+.wait-crew i:nth-child(3) { background: var(--rose); animation-delay: .36s; }
+.wait-crew i::before, .wait-crew i::after { content: ""; position: absolute; top: 19px; width: 4px; height: 7px; background: var(--ink); border-radius: 50%; transform: translate(calc(var(--look-x) * 2px), calc(var(--look-y) * 2px)); }
+.wait-crew i::before { left: 15px; }
+.wait-crew i::after { right: 15px; }
+.wait-copy { max-width: 430px; }
+.wait-copy strong { display: block; color: var(--ink); font-size: 16px; }
+.wait-copy p { margin: 9px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.wait-elapsed { display: block; margin-top: 9px; color: var(--muted); font: 10px/1.6 var(--font-mono); font-variant-numeric: tabular-nums; }
+.wait-track { width: min(230px, 100%); height: 6px; overflow: hidden; border-radius: 999px; background: var(--cream-2); }
+.wait-track span { display: block; width: 40%; height: 100%; background: var(--lavender-2); border-radius: inherit; animation: wait-travel 1.7s ease-in-out infinite; }
+.studio-opening { width: min(560px, calc(100% - 36px)); margin: 18vh auto; }
+.studio-opening .wait-state { border-style: solid; border-color: var(--ink); box-shadow: 5px 5px 0 var(--lavender-2); }
+.activity-dock { position: fixed; right: 24px; bottom: 24px; z-index: 55; display: flex; align-items: center; gap: 12px; max-width: min(420px, calc(100vw - 32px)); padding: 13px 18px; border: 1.5px solid var(--ink); border-radius: 16px; background: var(--paper); box-shadow: 3px 3px 0 var(--lavender-2); pointer-events: none; animation: feedback-in .18s .15s both; }
+.activity-dock[hidden] { display: none; }
+.activity-dock.in-dialog { position: static; max-width: none; margin: 0 24px 12px; box-shadow: none; border-color: var(--line-2); background: var(--cream); }
+.activity-dock strong { font-size: 12px; font-weight: 650; }
+.activity-dock .wait-elapsed { margin-top: 2px; }
+.activity-spinner, button.is-busy::before { content: ""; display: inline-block; flex: 0 0 auto; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .9s linear infinite; }
+button.is-busy { cursor: progress; opacity: .8; }
+button.is-busy > .icon { display: none; }
+.inline-loader { display: inline-block; width: 12px; height: 12px; vertical-align: -2px; margin-right: 5px; }
+.terminal-screen { position: relative; }
+.terminal-connecting { position: absolute; inset: 12px; z-index: 2; display: grid; align-items: center; }
+.expected-output.is-pending > .icon { animation: wait-hop 1.4s ease-in-out infinite; }
+#save-status.is-saving::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--lavender-ink); animation: pulse-dot 1.2s ease-in-out infinite; }
+@keyframes wait-hop { 0%, 70%, 100% { transform: translateY(0) rotate(0); } 30% { transform: translateY(-10px) rotate(-6deg); } 45% { transform: translateY(-7px) rotate(5deg); } }
+@keyframes wait-travel { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
+@keyframes feedback-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 600px) { .wait-state { padding: 24px 14px; } .activity-dock { right: 16px; bottom: 16px; } .activity-dock.in-dialog { margin-inline: 16px; } }
+@media (prefers-reduced-motion: reduce) { .wait-crew i, .wait-track span, .activity-spinner, button.is-busy::before, .activity-dock, .expected-output.is-pending > .icon, #save-status.is-saving::before { animation: none; } .wait-track span { width: 100%; background: var(--line-2); } }

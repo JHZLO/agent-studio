@@ -1,3 +1,4 @@
+import { beginActivity, trackActivity } from "./feedback.js";
 import { activeStatuses } from "../../packages/contracts/index.ts";
 import { t, setLanguage } from "./i18n.js";
 let csrf;
@@ -10,12 +11,12 @@ let queuedWrites = 0;
 export const saveStatus = () => saveError ? "Save needs attention" : pendingState || queuedWrites ? "Saving..." : "Saved in local SQLite";
 const announceSave = () => window.dispatchEvent(new CustomEvent("studio-save", { detail: saveStatus() }));
 window.addEventListener("beforeunload", event => { if (pendingState || queuedWrites) { event.preventDefault(); event.returnValue = ""; } });
-export const bootstrap = async () => {
-  const response = await fetch("/api/bootstrap", { cache: "no-store" });
+export const bootstrap = () => trackActivity("Connecting to your studio", async () => {
+  const response = await fetch("/api/bootstrap", { cache: "no-store", signal: AbortSignal.timeout(125000) });
   if (!response.ok) throw new Error("Could not connect to the local runner.");
   const data = await response.json(); csrf = data.csrf;
   return data;
-};
+});
 export const initial = await bootstrap().catch(error => {
   const panel = document.getElementById("app");
   panel.textContent = t("The local service is unavailable. Start Agent Studio, then retry. ");
@@ -25,23 +26,36 @@ export const initial = await bootstrap().catch(error => {
 revision = initial.state.revision;
 setLanguage(initial.state.language);
 
-export async function request(path, body) {
-  const payload = body ? JSON.stringify({ ...body, commandId: body.commandId || crypto.randomUUID() }) : undefined;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const response = await fetch(path, { method: body ? "POST" : "GET", headers: body ? { "Content-Type": "application/json", "X-Studio-CSRF": csrf } : {}, body: payload, signal: AbortSignal.timeout(125000) });
-      if (response.status === 401 || response.status === 403) {
-        if (!attempt) { await bootstrap(); continue; }
+const requestLabels = {
+  "/api/catalog": "Scanning your skill library", "/api/skill": "Reading skill instructions",
+  "/api/snapshot": "Reading saved skill files", "/api/snapshots": "Preparing skill snapshots",
+  "/api/folders": "Loading folders", "/api/project": "Checking project and Git branches",
+  "/api/local/scan": "Finding local projects", "/api/local/import": "Importing selected projects", "/api/local/read": "Reading saved conversation",
+  "/api/connections/check": "Checking account, models and usage", "/api/connections/login": "Opening official sign-in", "/api/connections/disconnect": "Disconnecting account",
+  "/api/settings": "Saving workspace changes", "/api/projects/remove": "Removing project from Studio", "/api/reset": "Resetting workspace",
+  "/api/runs/start": "Preparing the task environment", "/api/runs/read": "Loading task history", "/api/runs/reconcile": "Checking the interrupted task",
+  "/api/terminal/open": "Starting the shared terminal", "/api/terminal/close": "Returning control to Studio",
+};
+export function request(path, body) {
+  const label = path === "/api/runs/control" ? ({ pause: "Requesting a pause", resume: "Resuming the task", cancel: "Cancelling the task", approve: "Sending approval", "approve-review": "Approving the reviewed version", "approve-review-only": "Saving review approval", "request-revision": "Sending revision feedback" }[body?.action] || "Updating the task") : requestLabels[path] || "Working with your local studio";
+  return trackActivity(label, async update => {
+    const payload = body ? JSON.stringify({ ...body, commandId: body.commandId || crypto.randomUUID() }) : undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await fetch(path, { method: body ? "POST" : "GET", headers: body ? { "Content-Type": "application/json", "X-Studio-CSRF": csrf } : {}, body: payload, signal: AbortSignal.timeout(125000) });
+        if (response.status === 401 || response.status === 403) {
+          if (!attempt) { update("Reconnecting to the local service"); await bootstrap(); continue; }
+        }
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "The local service rejected the request.");
+        return data;
+      } catch (error) {
+        if (error instanceof TypeError && !attempt) { update("Retrying the local connection"); await new Promise(resolve => setTimeout(resolve, 500)); continue; }
+        throw error;
       }
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "The local service rejected the request.");
-      return data;
-    } catch (error) {
-      if (error instanceof TypeError && !attempt) { await new Promise(resolve => setTimeout(resolve, 500)); continue; }
-      throw error;
     }
-  }
-  throw new Error("The local API could not be reached.");
+    throw new Error("The local API could not be reached.");
+  });
 }
 const settingsOnly = state => {
   const { version, agents, flows, activeFlowId, projects, activeProjectId, skillRoots, approvalRequired, brief, navigationCollapsed, language, maxConcurrentRuns } = state;
@@ -94,6 +108,8 @@ export class StudioEngine {
     if (this.closed) return;
     this.events?.close();
     const events = new EventSource(`/api/events?after=${this.seq}`); this.events = events;
+    this.connectionFeedback ??= beginActivity("Connecting to task updates");
+    events.onopen = () => { this.connectionFeedback?.finish(); this.connectionFeedback = undefined; };
     events.addEventListener("run", event => {
       const seq = Number(event.lastEventId);
       if (seq <= this.seq) return;
@@ -102,6 +118,7 @@ export class StudioEngine {
     events.onerror = () => {
       events.close();
       if (this.closed) return;
+      this.connectionFeedback ??= beginActivity("Reconnecting to task updates");
       this.reconnect = setTimeout(async () => {
         try {
           const previous = [...this.activeRuns.keys()];
@@ -137,5 +154,5 @@ export class StudioEngine {
   cancel(run = this.run) { return this.control("cancel", run); }
   approve(run = this.run) { return this.control("approve", run); }
   async reconcile(run = this.run) { try { this.update(await request("/api/runs/reconcile", { id: run.id })); } catch (error) { window.dispatchEvent(new CustomEvent("studio-error", { detail: error.message })); } }
-  dispose() { this.closed = true; this.events?.close(); clearTimeout(this.reconnect); }
+  dispose() { this.closed = true; this.events?.close(); clearTimeout(this.reconnect); this.connectionFeedback?.finish(); this.connectionFeedback = undefined; }
 }
