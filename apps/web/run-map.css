@@ -1,0 +1,42 @@
+.run-view-toolbar { display: flex; justify-content: flex-end; margin-top: 20px; }
+.run-view-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 7px 14px; white-space: nowrap; font-size: 12px; }
+.run-view-switch .icon { width: 15px; height: 15px; }
+.run-view-switch button.active { background: var(--lavender); }
+.run-view-toolbar + .run-grid, .run-map { margin-top: 12px; }
+.character-space { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: center; justify-items: center; gap: 44px 24px; min-height: 380px; max-width: 1060px; margin: auto; padding: 55px 30px 70px; }
+.run-map-character { display: flex; flex-direction: column; align-items: center; gap: 9px; width: 160px; min-width: 0; padding: 10px; border: 0; border-radius: 28px; background: transparent; color: var(--ink); }
+.run-map-character:nth-child(even) { margin-top: 48px; }
+.run-map-character:focus-visible { outline: 2px solid var(--agent-color); outline-offset: 7px; }
+.character-figure { position: relative; display: grid; place-items: start center; width: 128px; height: 132px; padding-top: 6px; transition: transform .2s; isolation: isolate; }
+.run-map-character:hover .character-figure { transform: translateY(-6px); }
+.character-figure .agent-icon { --size: 100px; border-width: 2px; box-shadow: inset -5px -5px 0 #2b22380c; }
+.character-figure .agent-badge { display: none; }
+.character-shadow { position: absolute; z-index: -1; bottom: 4px; left: 15%; width: 70%; height: 14px; border-radius: 50%; background: var(--agent-color); opacity: .12; filter: blur(1px); }
+.character-halo { position: absolute; z-index: -1; inset: -28px; border-radius: 50%; opacity: 0; background: radial-gradient(ellipse, var(--agent-bg), transparent 68%); }
+.run-map-character[data-status="running"] .character-halo { opacity: .9; }
+.character-mark { position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 27px; height: 27px; border: 1.5px solid var(--ink); border-radius: 50%; background: var(--paper); color: var(--agent-color); }
+.character-mark .icon { width: 15px; height: 15px; }
+.character-name { max-width: 100%; overflow-wrap: anywhere; font-size: 14px; font-weight: 650; line-height: 1.4; }
+.character-status { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+.character-status > span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.run-map-character[data-status="running"] .character-status { color: var(--agent-color); }
+.run-map-character[data-status="succeeded"] .character-status { color: var(--mint-ink); }
+.run-map-character[data-status="succeeded"] .character-mark { background: var(--mint); color: var(--mint-ink); }
+.run-map-character:is([data-status="waiting_review"], [data-status="waiting_approval"], [data-status="paused"]) .character-mark { background: var(--butter); color: var(--butter-ink); }
+.run-map-character:is([data-status="waiting_review"], [data-status="waiting_approval"], [data-status="paused"]) .character-status { color: var(--butter-ink); }
+.run-map-character:is([data-status="failed"], [data-status="needs_reconciliation"]) .character-mark { background: var(--rose); color: var(--rose-ink); }
+.run-map-character:is([data-status="failed"], [data-status="needs_reconciliation"]) .character-status { color: var(--rose-ink); }
+.run-map-character:is([data-status="queued"], [data-status="cancelled"]) .agent-icon { filter: saturate(.25); opacity: .7; }
+.run-map-character[data-status="queued"] .agent-eyes i { height: 4px; border-radius: 3px; animation: none; }
+.character-hint { color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; padding: 0 20px 28px; }
+@media (max-width: 600px) {
+  .run-view-switch { width: 100%; }
+  .character-space { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 30px 14px; min-height: 0; padding: 40px 8px; }
+  .run-map-character { width: 100%; padding: 6px; }
+  .run-map-character:nth-child(even) { margin-top: 0; }
+  .character-figure { width: 102px; height: 112px; }
+  .character-figure .agent-icon { --size: 80px; }
+  .character-mark { width: 23px; height: 23px; }
+  .character-mark .icon { width: 13px; height: 13px; }
+  .character-name { font-size: 12px; }
+}
