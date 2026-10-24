@@ -13,7 +13,7 @@ export async function openTerminal(run: Run, step: Step, dataDir: string, socket
   const directory = join(dataDir, "runs", run.id);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const configPath = join(directory, `terminal-${id}.json`);
-  const config = { id, socketPath, runtimeSocket: step.socketPath, threadId: step.providerThreadId, cwd: run.cwd };
+  const config = { id, socketPath, runtimeSocket: step.socketPath, threadId: step.providerThreadId, cwd: step.workspace ?? run.cwd };
   await writeFile(configPath, JSON.stringify(config), { flag: "wx", mode: 0o600 });
   const log = await open(join(directory, `terminal-${id}.log`), "a", 0o600);
   const child = spawn(process.execPath, ["--import", "tsx", join(root, "apps/runner/terminal-host.ts"), configPath], { cwd: root, env: process.env, detached: true, stdio: ["ignore", log.fd, log.fd] }); child.unref(); await log.close();

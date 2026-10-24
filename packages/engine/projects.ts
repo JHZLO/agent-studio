@@ -80,11 +80,11 @@ export async function folders(raw: unknown = homedir()) {
   if (directories.length > 2000) throw new Error("Enter a more specific folder.");
   return { path, name: basename(path) || path, parent: dirname(path) === path ? null : dirname(path), folders: directories.sort((a, b) => a.name.localeCompare(b.name)).map(e => ({ name: e.name, path: join(path, e.name) })) };
 }
-export async function git(path: string, args: string[], mutate = false) {
+export async function git(path: string, args: string[], mutate = false, trim = true) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
   try {
     const result = await exec("git", ["--no-optional-locks", "-C", path, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", ...args], { env: { ...env, GIT_TERMINAL_PROMPT: "0" }, timeout: mutate ? 120000 : 10000, maxBuffer: 8 * 1024 * 1024 });
-    return result.stdout.trim();
+    return trim ? result.stdout.trim() : result.stdout;
   } catch (error) {
     if (mutate) throw new Error(`Git operation failed: ${(error as { stderr?: string }).stderr?.trim() || "Check the project and branch."}`);
     if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("Install Git to inspect project branches.");

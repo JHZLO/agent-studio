@@ -32,11 +32,11 @@ const specs = [
 export const enabledTools = (step: Step) => step.agent.tools.filter(tool => step.agent.permissionLevel !== "read-only" || tool === "read");
 export const toolSpecs = (step: Step) => [...specs.filter(spec => enabledTools(step).includes(spec.permission)).map(({ permission, ...spec }) => spec), ...(step.agent.delegation?.enabled ? delegationSpecs : [])].map(spec => ({ type: "function", ...spec }));
 
-export async function codeReference(cwd: string) {
+export async function codeReference(cwd: string, snapshot = false) {
   const head = await git(cwd, ["rev-parse", "--verify", "HEAD"]);
-  const changed = await git(cwd, ["diff", "--name-only", "-z", ...(head ? ["HEAD"] : [])]);
+  const changed = await git(cwd, ["diff", "--relative", "--name-only", "-z", ...(head ? ["HEAD"] : [])]);
   const untracked = await git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]);
-  const tracked = head ? "" : await git(cwd, ["ls-files", "-z"]);
+  const tracked = head && !snapshot ? "" : await git(cwd, ["ls-files", "-z"]);
   const files = new Set([changed, untracked, tracked].filter(Boolean).flatMap(value => value!.split("\0")).filter(Boolean));
   if (changed === null) {
     const walk = async (directory: string) => {
@@ -61,7 +61,7 @@ export async function codeReference(cwd: string) {
       content.push(`${path}:${info.mode}:${digest.digest("hex")}`);
     } catch { content.push(`${path}:unavailable`); }
   }
-  return hash(JSON.stringify({ head, content }));
+  return hash(JSON.stringify({ head: snapshot ? null : head, content }));
 }
 
 export class Toolbox {
@@ -79,20 +79,21 @@ export class Toolbox {
   private evidenceBytes = 0;
   readonly frozenFiles = new Map<string, string>();
   constructor(readonly context: Context, readonly artifactDir: string) {}
+  private get cwd() { return this.context.step.workspace ?? this.context.run.cwd; }
   get bypassPermissions() { return this.context.step.agent.permissionLevel === "bypass"; }
   get canWrite() { return enabledTools(this.context.step).includes("write") && (this.bypassPermissions || this.context.step.agent.permissionLevel === "project" || this.context.run.approved); }
   private async file(raw: string, create = false) {
     if (raw.length > 4096) throw new Error("This path exceeds the file access limit.");
-    const target = resolve(this.context.run.cwd, raw);
+    const target = resolve(this.cwd, raw);
     if (this.bypassPermissions) return target;
     if (secretPath(raw)) throw new Error("This path is excluded from agent file access.");
-    if (!contained(this.context.run.cwd, target)) throw new Error("Files must stay inside the selected project.");
+    if (!contained(this.cwd, target)) throw new Error("Files must stay inside the selected project.");
     let ancestor = target;
     while (!await stat(ancestor).then(() => true, () => false)) {
       if (!create || ancestor === dirname(ancestor)) throw new Error("File not found.");
       ancestor = dirname(ancestor);
     }
-    if (!contained(this.context.run.cwd, await realpath(ancestor))) throw new Error("Symlink escapes the project.");
+    if (!contained(this.cwd, await realpath(ancestor))) throw new Error("Symlink escapes the project.");
     return target;
   }
   private async target(raw: string, allowExternal = true) {
@@ -122,7 +123,7 @@ export class Toolbox {
       output = await this.execute(name, input);
       if (output && typeof output === "object" && "exitCode" in output && output.exitCode !== 0) success = false;
     } catch (error) { success = false; output = { error: this.context.redact((error as Error).message) }; }
-    const receipt = { id, tool: name, input: JSON.parse(this.context.redact(JSON.stringify(input))), output, success, at, codeReference: await codeReference(this.context.run.cwd) };
+    const receipt = { id, tool: name, input: JSON.parse(this.context.redact(JSON.stringify(input))), output, success, at, codeReference: await codeReference(this.cwd, !!this.context.step.workspace) };
     this.evidenceBytes += Buffer.byteLength(JSON.stringify(receipt));
     this.receipts.push(receipt);
     const text = this.context.redact(JSON.stringify({ receiptId: id, tool: name, ...input, result: output }, null, 2));
@@ -144,7 +145,7 @@ export class Toolbox {
       const walk = async (dir: string, level: number) => {
         for (const entry of await readdir(dir, { withFileTypes: true })) {
           if ((!this.bypassPermissions && (entry.name.startsWith(".") || secretPath(entry.name))) || ["node_modules", "target", "dist", "build"].includes(entry.name) || entry.isSymbolicLink()) continue;
-          const path = join(dir, entry.name); files.push(relative(this.context.run.cwd, path) + (entry.isDirectory() ? "/" : ""));
+          const path = join(dir, entry.name); files.push(relative(this.cwd, path) + (entry.isDirectory() ? "/" : ""));
           if (files.length > 1000) return;
           if (entry.isDirectory() && level > 1) await walk(path, level - 1);
         }
@@ -153,7 +154,7 @@ export class Toolbox {
     }
     if (name === "studio_read") {
       const { path } = z.object({ path: z.string() }).parse(input);
-      const snapshot = this.frozenFiles.get(resolve(this.context.run.cwd, path));
+      const snapshot = this.frozenFiles.get(resolve(this.cwd, path));
       if (snapshot !== undefined) return snapshot;
       const target = await this.file(path);
       if ((await stat(target)).size > 256 * 1024) throw new Error("Read a smaller file (maximum 256 KB).");
@@ -164,7 +165,7 @@ export class Toolbox {
       if (!this.canWrite) throw new Error("File writes have not been approved.");
       const target = await this.file(path, true);
       await mkdir(dirname(target), { recursive: true });
-      if (!this.bypassPermissions && !contained(this.context.run.cwd, await realpath(dirname(target)))) throw new Error("Symlink escapes the project.");
+      if (!this.bypassPermissions && !contained(this.cwd, await realpath(dirname(target)))) throw new Error("Symlink escapes the project.");
       this.abort.signal.throwIfAborted();
       const handle = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o644);
       try { await handle.writeFile(content); } finally { await handle.close(); }
@@ -175,7 +176,7 @@ export class Toolbox {
       if (this.bypassPermissions) return this.command("/bin/sh", ["-c", data.command], data.timeoutSeconds * 1000, data.background);
       if (this.context.step.agent.permissionLevel !== "project" && !await this.context.approval("shell", "Run this project command?", data.command)) throw new Error("Command was rejected.");
       const writable = this.canWrite;
-      const args = ["sandbox", "-P", "agent-studio-command", "-C", this.context.run.cwd, "-c", `permissions.agent-studio-command.extends=":${writable ? "workspace" : "read-only"}"`, "-c", "permissions.agent-studio-command.network.enabled=true", "--", "/bin/sh", "-c", data.command];
+      const args = ["sandbox", "-P", "agent-studio-command", "-C", this.cwd, "-c", `permissions.agent-studio-command.extends=":${writable ? "workspace" : "read-only"}"`, "-c", "permissions.agent-studio-command.network.enabled=true", "--", "/bin/sh", "-c", data.command];
       return this.command(codexBinary, args, data.timeoutSeconds * 1000, data.background);
     }
     if (name === "studio_http") {
@@ -200,7 +201,7 @@ export class Toolbox {
   }
   private async command(binary: string, args: string[], timeout: number, background: boolean) {
     this.abort.signal.throwIfAborted();
-    const process = spawn(binary, args, { cwd: this.context.run.cwd, env: runtimeEnvironment(), stdio: ["ignore", "pipe", "pipe"], detached: true });
+    const process = spawn(binary, args, { cwd: this.cwd, env: runtimeEnvironment(), stdio: ["ignore", "pipe", "pipe"], detached: true });
     this.processes.add(process);
     this.foreground.add(process);
     let text = "";
@@ -240,7 +241,7 @@ export class Toolbox {
       await mkdir(this.artifactDir, { recursive: true, mode: 0o700 });
       const id = randomUUID(), mediaPath = join(this.artifactDir, `${id}.png`);
       await page.screenshot({ path: mediaPath, fullPage: true });
-      const artifact: Artifact = { id, name: `browser-${id.slice(0, 8)}.png`, type: "Screenshot", content: `Captured from ${page.url()}`, agent: this.context.step.agent.name, stepId: this.context.step.id, mediaPath, mime: "image/png", codeReference: await codeReference(this.context.run.cwd), verified: true };
+      const artifact: Artifact = { id, name: `browser-${id.slice(0, 8)}.png`, type: "Screenshot", content: `Captured from ${page.url()}`, agent: this.context.step.agent.name, stepId: this.context.step.id, mediaPath, mime: "image/png", codeReference: await codeReference(this.cwd, !!this.context.step.workspace), verified: true };
       this.context.run.artifacts.push(artifact); this.context.save("artifact.created", { id });
       return { artifactId: id, url: page.url() };
     }
