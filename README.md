@@ -61,6 +61,10 @@ Open **Flows** and select a step. **After this step** controls when a person rev
 
 When a task needs review, open **Review outputs**. Read the plan and QA sheet, request changes with feedback, or choose **Lock only** to approve and remain paused. **Lock and continue** starts the next step. Later drafts can be compared with earlier drafts, and **Attempts** retains previous conversations and outputs. Human review does not grant file, shell, or network permissions.
 
+To plan with the agent before coding, set the Planner step to **Review before continuing**, enable **Lock reviewed outputs**, and return revisions to the Planner. Its review panel accepts questions and changes; each submission produces a new draft while Coder stays queued. **Lock only** keeps Coder waiting until you resume. Existing flows retain their saved rules, so check the selected flow before starting. Completed runs retain their original snapshots.
+
+Attach the relevant architecture skills to both Planner and Coder when the plan must follow a specific codebase. Ask Planner to specify the package layout, responsibilities, transaction boundaries, and test criteria, then inspect those choices before locking. Skill instructions guide implementation; they do not replace code review or test evidence.
+
 Under **Automatic revisions**, choose an earlier step and a limit from 1 to 10. A `revise` result reruns that interval in fresh sessions before the human checkpoint. The limit counts extra attempts after the first pass through the interval. At the limit, the task either requests human feedback or stops. Human feedback authorizes one more attempt without resetting the automatic limit. Loop ranges cannot overlap. Execution errors stop the task instead of consuming revision attempts.
 
 Changes to an approved plan require another human review. Approval checks the reviewed output versions and project fingerprint; changed files require a fresh revision. Pending human reviews survive a runner restart. Superseded outputs remain in history and are not passed forward as current evidence.

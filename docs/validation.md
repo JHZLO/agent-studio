@@ -79,3 +79,16 @@ Checked on 2026-10-24, macOS arm64. The feature source passed strict TypeScript 
 - Two read-only Planner tasks ran through the existing Codex subscription at the same time. Their active provider turns overlapped, their thread IDs and host processes were distinct, and each plan and QA sheet included its own project's marker. Cancelling one task left the other pending review; approving and resuming the other completed it. Sample source files were preserved.
 
 The live check used two separate sample folders and attached the planning and coding-guideline skills as frozen snapshots. It did not run a concurrent Claude workload, API-key inference, or a capacity benchmark. The configurable maximum of eight is a product limit, not a provider throughput guarantee.
+
+## Project access and collaborative planning
+
+Checked on 2026-10-24, macOS arm64. The feature source passed strict TypeScript checks, the production build, and 93 automated tests. The local workspace, including separate pending feedback changes, passed the same checks and 97 tests.
+
+- A real Node child process starts the Claude MCP bridge from an external project folder. A project-local `tsx` package cannot replace Studio's runtime loader. This reproduced the previous module-resolution failure before the fix.
+- A successful-looking Claude report is rejected when the Studio MCP connection is absent or failed. The initialization event records whether the tool connection was established.
+- The Chromium planning test verifies the question/revision field, a revised draft, reload during review, and locking without starting Coder. Existing review and resume controls retain their behavior. Korean planning guidance is available.
+- The user workspace displayed the attached planning and architecture skills and the Planner review rule after reload. Existing models, permissions, project settings, and completed-run snapshots were preserved.
+- A live Claude subscription Planner inspected an external Kotlin sample, produced a draft, accepted revision feedback, and returned a second draft. Coder stayed queued and source files remained unchanged through both drafts. Lock only paused the run; resume then started the Codex subscription Coder. Final approval completed the isolated task.
+- Coder refactored the copied sample into controller, contracts, domain facade, service, repository, entity, and DTO packages. Source inspection confirmed one repository per service and a facade-owned transaction. Gradle ran the 16 existing tests and seven additional architecture/facade tests successfully. The original test assertions and build configuration were preserved.
+
+The sample used H2 and existing local CLI subscriptions. It does not establish production-database locking behavior or general code quality across future tasks. The original project was not modified. Private architecture references, skill bindings, provider identifiers, and sample artifacts remain outside the public repository. Code commit `64a7cb3` also passed the GitHub Actions Check workflow.
