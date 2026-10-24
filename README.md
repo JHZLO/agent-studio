@@ -83,6 +83,8 @@ Changes to an approved plan require another human review. Approval checks the re
 
 The default roles are Planner, Coder, Reviewer, Backend QA, Frontend QA, and Documenter. Each step opens a fresh provider session. A completed agent report is distinct from tool evidence; the UI labels both. A blocked or invalid report never becomes a successful step.
 
+Waiting screens show animated activity and elapsed time. Buttons show when a request is in progress and prevent duplicate submissions. Task preparation follows the actual project, skill, and runner requests; it does not invent a completion percentage. Closing a discovery dialog lets you keep working while its request finishes. Animations respect your system's reduced-motion setting.
+
 ## Sessions and recovery
 
 Pause the task and wait for its current step to finish. Open **Terminal** on a started Codex session. Closing this view keeps its PTY alive. Use **Return control to Studio** before resuming automatic steps. An external terminal can attach to the same PTY:
