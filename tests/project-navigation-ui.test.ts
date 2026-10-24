@@ -94,7 +94,9 @@ test("Project toggles group active tasks and update without disrupting the curre
   await page.setViewportSize({ width: 900, height: 900 });
   await expect(task("a2")).toBeVisible(); await expect(task("a2").locator(".project-task-copy")).toBeHidden();
   await expect(task("a2")).toHaveAttribute("title", "Task a2 - 검토 필요");
-  const bounds = await task("a2").boundingBox(), nav = await page.locator(".sidebar").boundingBox();
-  assert(bounds && nav && bounds.x >= nav.x && bounds.x + bounds.width <= nav.x + nav.width);
+  await expect.poll(async () => {
+    const bounds = await task("a2").boundingBox(), nav = await page.locator(".sidebar").boundingBox();
+    return !!bounds && !!nav && bounds.x >= nav.x && bounds.x + bounds.width <= nav.x + nav.width;
+  }).toBe(true);
   assert.deepEqual(errors, []);
 });

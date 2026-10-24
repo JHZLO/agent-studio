@@ -66,7 +66,10 @@ test("Session clocks tick without rerendering, survive reloads and stop at each 
   await expect(clock()).toHaveText("00:00"); await page.clock.fastForward(2500); await expect(clock()).toHaveText("00:02");
   await expect(page.locator(".attempts-list summary [data-session-clock]")).toHaveText(["02:00", "02:33", "00:02"]);
   await page.setViewportSize({ width: 390, height: 844 });
-  const bounds = await clock().boundingBox(); assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 390);
+  await expect.poll(async () => {
+    const bounds = await clock().boundingBox();
+    return !!bounds && bounds.x >= 0 && bounds.x + bounds.width <= 390;
+  }).toBe(true);
   await page.getByRole("button", { name: "전체 작업", exact: true }).click();
   await page.clock.fastForward(60000); await expect(page.locator("[data-session-clock]")).toHaveCount(0);
   assert.deepEqual(errors, []);
