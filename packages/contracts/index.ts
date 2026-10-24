@@ -71,6 +71,7 @@ export type Approval = { id: string; stepId: string; kind: "write" | "shell" | "
 export type Run = { id: string; brief: string; project: Project; projectRules?: string[]; flow: z.infer<typeof flowSchema>; status: Status; createdAt: string; completedAt?: string; index: number; steps: Step[]; artifacts: Artifact[]; note: string; cwd: string; baseHead: string | null; approvalRequired: boolean; approval?: Approval; approved: boolean; pauseRequested: boolean; controlMode: "studio" | "terminal" | "switching"; eventSeq: number; terminal?: { id: string; stepId: string; connected: boolean; socketPath?: string; pid?: number }; commandId: string;
   review?: FlowReview; reviewHistory?: (FlowReview & { action: "approved" | "revision_requested"; feedback?: string; resolvedAt: string })[];
   stepHistory?: Step[]; loopCounts?: Record<string, number>; lockedPlan?: { version: number; stepId: string; artifactIds: string[] };
+  followup?: { id: string; stepId: string; message: string; startedAt: string; previousStatus: Status; previousStepStatus: Status; previousNote: string; previousFinalText?: string; codeReference: string; turnId?: string; stopRequested?: boolean };
 };
 export const activeStatuses: Status[] = ["queued", "running", "waiting_approval", "waiting_review", "paused", "cancelling", "needs_reconciliation"];
 export const now = () => new Date().toISOString();
