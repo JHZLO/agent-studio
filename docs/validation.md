@@ -40,6 +40,17 @@ The k6 tool was executed separately against a local HTTP fixture. Its excessive-
 
 The recovery fault tests do not claim exhaustive process-crash coverage. Interrupted Claude turns and uncertain terminal ownership stop for inspection instead of automatic replay.
 
+## Instructions during active work
+
+Checked on 2026-10-24, macOS arm64. The isolated feature source passed type checking, production build, and all 130 automated tests. The current workspace also passed the session and agent-map Chromium checks.
+
+- Engine coverage includes same-session FIFO processing, priority interruption, foreground shell termination, old tool-request rejection, approval rejection without permission escalation, queue cancellation, human plan checkpoints, and recovery without replaying an unconfirmed instruction.
+- Chromium coverage sends queued and interrupting messages, removes queued entries, retains drafts during SSE updates, and checks both session layouts and a 390 px viewport. A pre-existing agent-map resize assertion now waits for the responsive layout before reading positions.
+- Real Codex and Claude subscription sessions each started a bounded 30-second shell command in an isolated sample. Studio interrupted that command, processed the priority instruction, then processed the queued instruction in the same provider session. Successful file-tool receipts verified `priority.done` before `queued.done`; the interrupted command never created `obsolete.txt`.
+- Codex requested a scope-change review after its final response. Studio retained that human checkpoint. Claude finished the single-role sample. Neither check changed a user project or its stored agent settings.
+
+The API-key paths and other operating systems were not exercised for this change. On runner restart or an unconfirmed interruption, pending message text is retained and automatic replay is blocked. Existing file changes are not rolled back by interruption.
+
 ## Follow-up conversations
 
 Validated on 2026-10-24. The selected agent can receive a message after completion, cancellation, failure, pause, or at a human review checkpoint, provided its provider session is idle. The runner uses the saved agent permissions, skills, model, and provider session. It reserves task capacity and the working folder before accepting the message. Replies do not approve a plan or start later workflow steps. File changes mark earlier output versions as stale.

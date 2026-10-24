@@ -32,6 +32,19 @@ Choose **Defaults > Display language** to switch between English and Korean. The
 
 Menus, settings, task controls, status labels, dates, and counts follow the selected language. Project names, agent names, instructions, skill content, conversations, and artifacts retain their original text. Provider diagnostics and terminal output remain as reported by the runtime. Changing the UI language does not change agent instructions or response language.
 
+## Messages during agent work
+
+Open an agent's **Conversation** tab in the normal or fullscreen layout. While that agent is working, choose how to send the next instruction:
+
+- **Add to queue** finishes the current turn and processes pending instructions in order, in the same provider session. These instructions finish before the role hands off to another agent.
+- **Adjust current work** interrupts the current turn and its foreground tools, then runs the new instruction ahead of the queue. Existing file changes remain in place. Studio waits for the interruption before starting another turn.
+
+The pending list supports cancellation and holds up to 20 instructions. Drafts stay separate for each agent. Ctrl/Cmd + Enter sends with the selected mode. Only the agent currently working accepts live instructions; other started agents can receive follow-up messages when the workflow is idle.
+
+Instructions use the agent's frozen permissions and skills. They cannot bypass a plan review or expand tool access. Follow-up conversations from a completed or paused workflow do not start later agents. **Stop reply** cancels that reply's remaining queue, while workflow cancellation stops all pending instructions for the task. Cancelled messages remain in the conversation.
+
+Pending instructions survive a page reload. If the runner restarts or cannot confirm a stop, Studio holds the task for inspection and does not replay commands. Inspect the provider and project before cancelling that interrupted task and starting a new conversation.
+
 ## Concurrent tasks
 
 Choose **Defaults > Concurrent tasks** to set a workspace limit from 1 to 8. Existing workspaces start at 1. The home screen shows the active count, and **Tasks** lets you open and control each task independently. Approvals, reviews, cancellation, provider sessions, and terminal control belong to the selected task.
