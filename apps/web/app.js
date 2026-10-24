@@ -1,9 +1,9 @@
 import { t, html, attrs, locale, setLanguage } from "./i18n.js";
 import { flowEdges, flowLayers, relatedSteps } from "../../packages/contracts/flow.ts";
 import "./flow-graph.css";
-import { flowSchema, avatarSchema, revisionGroups } from "../../packages/contracts/index.ts";
+import { flowSchema, avatarSchema, revisionGroups, removeAgentPreset } from "../../packages/contracts/index.ts";
 import { roles, models, prompts, initialState, initializeFlows } from "../../packages/contracts/defaults.js";
-import { initial, StudioEngine, request, queueSettings, flush, reset, removeProject, importLocal, saveStatus } from "./runtime.js";
+import { initial, StudioEngine, request, queueSettings, flush, reset, removeProject, removeAgent, importLocal, saveStatus } from "./runtime.js";
 import "./skills.js";
 import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js";
 import { enhanceSelects, closeSelects } from "./selects.js";
@@ -522,7 +522,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     ui.selected = null;
     if (ui.view !== "agents") { ui.view = "agents"; render(); }
     const flowCount = state.flows.filter(flow => flow.workflow.includes(id)).length;
-    showModal(escape(agent.name), html`<p class="agent-reuse-note">${flowCount ? t`Used in ${flowCount} ${t(flowCount === 1 ? "flow" : "flows")}. Changes apply everywhere this agent is used.` : t("Configure this agent, then add it to a flow.")} Active tasks keep their current settings.</p>${form ? html`<div id="agent-editor-fields"></div>` : agentForm(agent)}`, button("close-modal", "Cancel", "") + html`<button type="submit" form="agent-preset-form" class="btn primary">Save agent</button>`, true, "Agent library / Edit agent");
+    showModal(escape(agent.name), html`<p class="agent-reuse-note">${flowCount ? t`Used in ${flowCount} ${t(flowCount === 1 ? "flow" : "flows")}. Changes apply everywhere this agent is used.` : t("Configure this agent, then add it to a flow.")} Active tasks keep their current settings.</p>${form ? html`<div id="agent-editor-fields"></div>` : agentForm(agent)}`, button("remove-agent", "Delete agent", "trash", "danger text", `data-id="${escape(agent.id)}"`) + button("close-modal", "Cancel", "") + html`<button type="submit" form="agent-preset-form" class="btn primary">Save agent</button>`, true, "Agent library / Edit agent");
     modal.classList.add("agent-editor");
     if (!form) updatePermissionFields(modal.querySelector("#agent-preset-form"));
     if (form) {
@@ -569,9 +569,25 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
       <div class="context-chip">${icon("leaf")}New session per step. Only the brief, decisions, and artifact references carry forward.</div></form>`;
   }
 
+  function confirmAgentRemoval(id) {
+    const agent = state.agents.find(item => item.id === id);
+    if (!agent) return;
+    const next = removeAgentPreset(state, id);
+    const flows = state.flows.filter(flow => flow.workflow.includes(id));
+    const delegates = state.agents.filter(item => item.id !== id && item.delegation?.allowedAgentIds.includes(id));
+    showModal(t("Delete agent?"), html`<p>${t`Delete ${escape(agent.name)} from your library?`}</p>
+      ${flows.length ? html`<h3>Affected flows</h3><ul class="agent-removal-list">${flows.map(flow => {
+        const updated = next.flows.find(item => item.id === flow.id);
+        const affected = (flow.rules || []).filter(rule => JSON.stringify(rule) !== JSON.stringify(updated.rules.find(item => item.after === rule.after))).length;
+        return html`<li><strong>${escape(flow.name)}</strong>${flow.archived ? html` <span class="badge gray">Archived</span>` : ""}<small>${t`${affected} rules removed or updated`}</small></li>`;
+      }).join("")}</ul><p>Incoming and outgoing connections will be joined. Rules that refer to this agent will be removed or reset.</p>` : html`<p>This agent is not used in any flow.</p>`}
+      ${delegates.length ? html`<h3>Affected delegation lists</h3><p>${delegates.map(item => escape(item.name)).join(", ")}</p><p>This agent will be removed from delegation lists. Empty lists will turn delegation off.</p>` : ""}
+      <p>Running tasks and past conversations, settings snapshots, and outputs will remain.</p><p class="form-error" id="agent-remove-error" role="alert" hidden></p>`, button("close-modal", "Keep agent", "") + button("confirm-remove-agent", "Delete agent", "trash", "danger", `data-id="${escape(id)}"`), false, "");
+  }
+
   function agentsView() {
     return heading(html`Your <em>agents</em>`, "Give each role a purpose, a model, and a set of boundaries.", button("new-agent", "New agent", "plus", "primary"), "Reusable presets") +
-      html`<div class="content-grid">${state.agents.map(agent => html`<section class="panel agent-card tilt" style="${agentStyle(agent)}"><div class="card-top">${agentIcon(agent, true)}<div><h2>${escape(agent.name)}</h2><p>${providerName(agent.provider)} / ${escape(agent.model)}</p></div></div><p>${escape(t(roles[agent.role].description))}</p><dl class="agent-card-settings"><div><dt>Permissions</dt><dd><span class="badge ${agent.permissionLevel === "bypass" ? "red" : agent.permissionLevel === "project" ? "amber" : "gray"}" title="${escape(t(permissionLevels[agent.permissionLevel || "ask"].description))}">${t(permissionLevels[agent.permissionLevel || "ask"].label)}</span></dd></div>${agent.provider === "codex" ? html`<div><dt>Fast mode</dt><dd><span class="badge ${agent.codexFastMode === "on" ? "" : "gray"}">${t({ default: "Follow Codex", on: "On", off: "Off" }[agent.codexFastMode || "default"])}</span></dd></div>` : ""}${agent.delegation?.enabled ? html`<div><dt>Parallel delegation</dt><dd><span class="badge">${agent.delegation.maxChildren} ${t("children max")}</span></dd></div>` : ""}</dl><div class="skill-list">${agent.skillBindings.length ? agent.skillBindings.map(skill => html`<span class="skill-chip" aria-pressed="true">${icon("file")}${escape(skill.name)}</span>`).join("") : html`<span class="meta">No skills attached</span>`}</div><div class="card-footer">${currentFlow().workflow.includes(agent.id) ? html`<span class="badge">In workflow</span>` : button("add-existing", "Add to workflow", "plus", "small", `data-id="${escape(agent.id)}"`)}${button("edit-agent", "Edit agent", "edit", "text small", `data-id="${escape(agent.id)}"`)}</div></section>`).join("")}</div>`;
+      (state.agents.length ? html`<div class="content-grid">${state.agents.map(agent => html`<section class="panel agent-card tilt" style="${agentStyle(agent)}"><div class="card-top">${agentIcon(agent, true)}<div><h2>${escape(agent.name)}</h2><p>${providerName(agent.provider)} / ${escape(agent.model)}</p></div></div><p>${escape(t(roles[agent.role].description))}</p><dl class="agent-card-settings"><div><dt>Permissions</dt><dd><span class="badge ${agent.permissionLevel === "bypass" ? "red" : agent.permissionLevel === "project" ? "amber" : "gray"}" title="${escape(t(permissionLevels[agent.permissionLevel || "ask"].description))}">${t(permissionLevels[agent.permissionLevel || "ask"].label)}</span></dd></div>${agent.provider === "codex" ? html`<div><dt>Fast mode</dt><dd><span class="badge ${agent.codexFastMode === "on" ? "" : "gray"}">${t({ default: "Follow Codex", on: "On", off: "Off" }[agent.codexFastMode || "default"])}</span></dd></div>` : ""}${agent.delegation?.enabled ? html`<div><dt>Parallel delegation</dt><dd><span class="badge">${agent.delegation.maxChildren} ${t("children max")}</span></dd></div>` : ""}</dl><div class="skill-list">${agent.skillBindings.length ? agent.skillBindings.map(skill => html`<span class="skill-chip" aria-pressed="true">${icon("file")}${escape(skill.name)}</span>`).join("") : html`<span class="meta">No skills attached</span>`}</div><div class="card-footer">${currentFlow().workflow.includes(agent.id) ? html`<span class="badge">In workflow</span>` : button("add-existing", "Add to workflow", "plus", "small", `data-id="${escape(agent.id)}"`)}${html`<div class="agent-card-actions">${button("edit-agent", "Edit agent", "edit", "text small", `data-id="${escape(agent.id)}"`)}${button("remove-agent", "Delete", "trash", "text small danger", attrs`data-id="${escape(agent.id)}" aria-label="Delete ${escape(agent.name)}"`)}</div>`}</div></section>`).join("")}</div>` : emptyState("agents", "No agents yet", "Create an agent to add it to your workflows.", button("new-agent", "New agent", "plus", "primary")));
   }
 
   function bindingField(bindings) {
@@ -1355,7 +1371,7 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     return [state.run, ...state.history].filter(Boolean).flatMap(run => [...run.artifacts, ...(run.children || []).flatMap(child => child.artifacts)]).find(artifact => artifact.id === id);
   }
 
-  const asyncActions = new Set(["child-approve", "child-cancel", "import-local", "confirm-local-import", "open-imported-session", "more-imported-messages", "confirm-remove-project", "browse-folders", "open-folder", "project-settings", "run", "pause", "resume", "approve", "cancel", "skill-detail", "refresh-skills", "skill-snapshot", "refresh-models", "connect-account", "official-login", "toggle-connection", "test-connection", "reconcile", "terminal-open", "terminal-close", "open-run", "confirm-reset"]);
+  const asyncActions = new Set(["confirm-remove-agent", "child-approve", "child-cancel", "import-local", "confirm-local-import", "open-imported-session", "more-imported-messages", "confirm-remove-project", "browse-folders", "open-folder", "project-settings", "run", "pause", "resume", "approve", "cancel", "skill-detail", "refresh-skills", "skill-snapshot", "refresh-models", "connect-account", "official-login", "toggle-connection", "test-connection", "reconcile", "terminal-open", "terminal-close", "open-run", "confirm-reset"]);
   document.addEventListener("click", async event => {
     if (ui.navigationActions && !event.target.closest(".sidebar-actions")) closeNavigationActions();
     const target = event.target.closest("[data-action]");
@@ -1600,6 +1616,18 @@ import { loadingView, beginInteraction, refreshFeedback } from "./feedback.js";
     else if (action === "library") libraryModal();
     else if (action === "new-agent") newAgentModal();
     else if (action === "edit-agent") editAgent(id);
+    else if (action === "remove-agent") confirmAgentRemoval(id);
+    else if (action === "confirm-remove-agent") {
+      try {
+        const result = await removeAgent(id);
+        state.agents = result.agents; state.flows = result.flows;
+        ui.selected = null; ui.linkFrom = null; ui.pendingOrder = null; ui.editingAgentId = null;
+        closeModal(); render(); toast("Agent deleted. Task history is preserved.");
+      } catch (error) {
+        const box = document.getElementById("agent-remove-error");
+        if (box) { box.textContent = t(error.message); box.hidden = false; } else toast(error.message);
+      }
+    }
     else if (action === "add-existing") {
       if (currentFlow().workflow.length >= 12) return toast("A sequential flow supports up to 12 steps.");
       if (!currentFlow().workflow.includes(id)) currentFlow().workflow.push(id);

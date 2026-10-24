@@ -67,7 +67,7 @@ export const flowSchema = z.object({
   }
 });
 export const settingsSchema = z.object({
-  version: z.literal(1), agents: z.array(agentSchema).min(1).max(100), flows: z.array(flowSchema).min(1).max(100),
+  version: z.literal(1), agents: z.array(agentSchema).max(100), flows: z.array(flowSchema).min(1).max(100),
   activeFlowId: z.string(), projects: z.array(projectSchema).max(100), activeProjectId: z.string().nullable(),
   skillRoots: z.array(z.string().max(1000)).max(12), approvalRequired: z.boolean(), brief: z.string().max(2000),
   navigationCollapsed: z.boolean().optional(),
@@ -84,6 +84,33 @@ export const settingsSchema = z.object({
   if (value.activeProjectId !== null && !value.projects.some(p => p.id === value.activeProjectId)) ctx.addIssue({ code: "custom", message: "Select a registered project or clear the selection." });
 });
 export type Settings = z.infer<typeof settingsSchema>;
+export function removeAgentPreset(settings: Settings, id: string): Settings {
+  if (!settings.agents.some(agent => agent.id === id)) throw new Error("Agent not found.");
+  const agents = settings.agents.filter(agent => agent.id !== id).map(agent => {
+    if (!agent.delegation?.allowedAgentIds.includes(id)) return agent;
+    const allowedAgentIds = agent.delegation.allowedAgentIds.filter(candidate => candidate !== id);
+    return { ...agent, delegation: { ...agent.delegation, allowedAgentIds, enabled: agent.delegation.enabled && allowedAgentIds.length > 0 } };
+  });
+  const flows = settings.flows.map(flow => {
+    if (!flow.workflow.includes(id)) return flow;
+    const workflow = flow.workflow.filter(candidate => candidate !== id);
+    let edges = flow.edges;
+    if (edges) {
+      const incoming = edges.filter(edge => edge.to === id), outgoing = edges.filter(edge => edge.from === id);
+      const remaining = edges.filter(edge => edge.from !== id && edge.to !== id);
+      const joined = incoming.flatMap(before => outgoing.map(after => ({ from: before.from, to: after.to })));
+      edges = [...new Map([...remaining, ...joined].map(edge => [JSON.stringify([edge.from, edge.to]), edge])).values()];
+    }
+    const rules = flow.rules.filter(rule => rule.after !== id).map(rule => {
+      const next = { ...rule };
+      if (next.returnTo === id) delete next.returnTo;
+      if (next.loop?.target === id) delete next.loop;
+      return next;
+    });
+    return { ...flow, workflow, edges, rules };
+  });
+  return settingsSchema.parse({ ...settings, agents, flows });
+}
 export type Agent = z.infer<typeof agentSchema> & { skillSnapshots?: Binding[] };
 export type Binding = z.infer<typeof bindingSchema> & { sourcePath?: string };
 export type Project = z.infer<typeof projectSchema>;

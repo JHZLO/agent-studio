@@ -32,7 +32,7 @@ const requestLabels = {
   "/api/folders": "Loading folders", "/api/project": "Checking project and Git branches",
   "/api/local/scan": "Finding local projects", "/api/local/import": "Importing selected projects", "/api/local/read": "Reading saved conversation",
   "/api/connections/check": "Checking account, models and usage", "/api/connections/login": "Opening official sign-in", "/api/connections/disconnect": "Disconnecting account",
-  "/api/settings": "Saving workspace changes", "/api/projects/remove": "Removing project from Studio", "/api/reset": "Resetting workspace",
+  "/api/settings": "Saving workspace changes", "/api/projects/remove": "Removing project from Studio", "/api/agents/remove": "Deleting agent preset", "/api/reset": "Resetting workspace",
   "/api/runs/start": "Preparing the task environment", "/api/runs/read": "Loading task history", "/api/runs/reconcile": "Checking the interrupted task",
   "/api/terminal/open": "Starting the shared terminal", "/api/terminal/close": "Returning control to Studio",
 };
@@ -78,6 +78,9 @@ export async function flush() {
 }
 export async function reset() {
   await flush(); const state = await request("/api/reset", {}); revision = state.revision; return state;
+}
+export async function removeAgent(id) {
+  await flush(); const result = await request("/api/agents/remove", { id, revision }); revision = result.revision; return result;
 }
 export async function removeProject(id) {
   await flush(); const result = await request("/api/projects/remove", { id, revision }); revision = result.revision; return result;

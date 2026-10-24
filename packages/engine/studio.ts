@@ -6,7 +6,7 @@ import { z } from "zod";
 import { Annotation, StateGraph, START, END } from "@langchain/langgraph";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { initialState } from "../contracts/defaults.js";
-import { settingsSchema, activeStatuses, revisionGroups, findingSchema, now, type Run, type Revision, type Step, type Settings, type Approval, type ImportedSession, type FlowReview, type Project } from "../contracts/index.ts";
+import { settingsSchema, removeAgentPreset, activeStatuses, revisionGroups, findingSchema, now, type Run, type Revision, type Step, type Settings, type Approval, type ImportedSession, type FlowReview, type Project } from "../contracts/index.ts";
 import { flowEdges, relatedSteps } from "../contracts/flow.ts";
 import { prepareDelegation, collectDelegation } from "./delegation-workspaces.ts";
 import { Store, hash } from "./store.ts";
@@ -116,6 +116,12 @@ export class Studio {
       const session = this.store.importedSession(key);
       if (!session) throw new Error("Imported session not found.");
       return { ...session, messages: session.messages.slice(offset, offset + 100), total: session.messages.length, nextOffset: offset + 100 < session.messages.length ? offset + 100 : null };
+    }
+    if (method === "agent.remove") {
+      const id = z.string().min(1).max(100).parse(input.id);
+      const result = this.saveSettings({ state: removeAgentPreset(this.settings(), id), revision: input.revision });
+      const { agents, flows } = this.settings();
+      return { ...result, agents, flows };
     }
     if (method === "project.remove") {
       const id = z.string().min(1).parse(input.id), previous = this.settings();

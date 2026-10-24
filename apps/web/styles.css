@@ -1005,3 +1005,9 @@ html:lang(ko) { word-break: keep-all; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .language-field { width: 130px; } }
 
 .concurrency-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0; color: var(--muted); font-size: 12px; }
+
+.agent-card .card-footer { flex-wrap: wrap; gap: 10px; }
+.agent-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.agent-removal-list { padding-left: 20px; margin: 12px 0; }
+.agent-removal-list li { margin-bottom: 10px; }
+.agent-removal-list small { display: block; color: var(--muted); margin-top: 4px; }
