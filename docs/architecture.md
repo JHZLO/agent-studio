@@ -32,7 +32,7 @@ The run also freezes root `AGENTS.md` and `CLAUDE.md` instructions. A worktree u
 
 SQLite transactions save a run and its event sequence together. Command IDs deduplicate identical requests. A pending command after a crash is uncertain and cannot be replayed automatically. This does not promise exactly-once behavior from model providers or external commands.
 
-SSE reconnects from a saved sequence and sends current persisted run state. Full conversations are loaded when a task is opened; the history list contains summaries. Logs do not contain hidden model reasoning.
+SSE reconnects from a saved sequence and sends the current persisted state of every changed run. Bootstrap includes all active runs so each task can be controlled after a reload. Full completed conversations are loaded when a task is opened; the history list contains summaries. Logs do not contain hidden model reasoning.
 
 ## Context and evidence
 
@@ -42,6 +42,8 @@ Tool execution records inputs, outputs, success, time, and a code fingerprint. S
 
 ## Control and recovery
 
-Only one run executes in a workspace. Pause takes effect between steps. A terminal can take control only at a safe boundary without an active turn or pending approval. Terminal input uses the same server and thread, and automatic steps remain paused. Before returning control, Studio checks for active provider turns and marks evidence stale if files changed.
+A workspace can allow 1 to 8 active runs, with 1 as the default. The runner reserves capacity before asynchronous preparation and rejects overlapping execution folders. Each run owns its driver, provider processes, pending approvals, message flushes, tools, and terminal. Paused tasks and pending reviews still occupy capacity. Reducing the limit does not stop existing tasks.
+
+Pause takes effect between steps for the selected run. A terminal can take control only at a safe boundary without an active turn or pending approval. Terminal input uses the same server and thread, and that run's automatic steps remain paused. Before returning control, Studio checks for active provider turns and marks evidence stale if files changed.
 
 The runner persists across UI/API disconnects. After runner failure, recovery reads the exact saved thread and turn instead of resending the prompt. Wrong identity, changed project, incomplete evidence, or unknown turn status stops recovery. Claude interrupted turns and uncertain terminal ownership require inspection and a new run; no provider writes are replayed.

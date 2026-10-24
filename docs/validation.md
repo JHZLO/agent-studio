@@ -69,3 +69,13 @@ Checked on 2026-10-24, macOS arm64. The feature-only source tree passed strict T
 - The local app on port 4184 displayed the new flow controls after its runner was refreshed. Existing settings were preserved and the Codex subscription connection was restored.
 
 The live run uses the official Codex CLI login. These additions have not received a live Claude run or cross-platform validation. Local test results do not establish remote CI status.
+
+## Concurrent tasks
+
+Checked on 2026-10-24, macOS arm64. The feature source passed strict TypeScript checks, the production build, and 91 automated tests.
+
+- New engine tests cover capacity reservations, overlapping provider turns, independent approvals and cancellation, per-run message persistence and process cleanup, identical/nested/symlink folder rejection, real Git worktree separation, shutdown during preparation, and recovery of every unfinished task. Lowering the limit preserves existing tasks.
+- A Chromium test changes and reloads the limit, controls an older active task, observes it through a second browser session and real SSE, preserves the selected task when another task changes, and checks the control at 390 px. Settings retain the existing revision check when another window changes them.
+- Two read-only Planner tasks ran through the existing Codex subscription at the same time. Their active provider turns overlapped, their thread IDs and host processes were distinct, and each plan and QA sheet included its own project's marker. Cancelling one task left the other pending review; approving and resuming the other completed it. Sample source files were preserved.
+
+The live check used two separate sample folders and attached the planning and coding-guideline skills as frozen snapshots. It did not run a concurrent Claude workload, API-key inference, or a capacity benchmark. The configurable maximum of eight is a product limit, not a provider throughput guarantee.

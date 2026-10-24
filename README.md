@@ -32,6 +32,12 @@ Choose **Defaults > Display language** to switch between English and Korean. The
 
 Menus, settings, task controls, status labels, dates, and counts follow the selected language. Project names, agent names, instructions, skill content, conversations, and artifacts retain their original text. Provider diagnostics and terminal output remain as reported by the runtime. Changing the UI language does not change agent instructions or response language.
 
+## Concurrent tasks
+
+Choose **Defaults > Concurrent tasks** to set a workspace limit from 1 to 8. Existing workspaces start at 1. The home screen shows the active count, and **Tasks** lets you open and control each task independently. Approvals, reviews, cancellation, provider sessions, and terminal control belong to the selected task.
+
+Use separate project folders or **New worktree** for tasks that run together. Studio rejects identical or overlapping execution folders, including symlinks. Each new worktree has its own folder and branch. Paused tasks, pending approvals, human reviews, and tasks awaiting recovery still occupy a slot. Lowering the limit does not stop existing tasks; it prevents new starts until a slot is available. Provider account limits and machine resources remain shared.
+
 ## Agent execution settings
 
 Open **Agent library > Edit agent**. Changes apply to future runs. Active runs keep their saved settings, available under **Handoff**.
@@ -107,7 +113,7 @@ Tests use temporary projects and local HTTP targets. The normal test suite does 
 
 Set `AGENT_STUDIO_PORT` to choose a port, and `AGENT_STUDIO_DATA_DIR` to isolate a workspace. Both must be set consistently for the server, runner, terminal command, and stop command. The default state directory is `.local/data`; generated worktrees, screenshots, skill snapshots, and logs stay local and are ignored by Git.
 
-Ctrl+C stops the web server while leaving the runner alive. Cancel a task in the UI, or use `./studio stop` to cancel the active task and stop that workspace's runner. Existing project changes and saved task records are preserved.
+Ctrl+C stops the web server while leaving the runner alive. Cancel a task in the UI, or use `./studio stop` to cancel all active tasks and stop that workspace's runner. Existing project changes and saved task records are preserved.
 
 See [architecture](docs/architecture.md), [security](docs/security.md), and [open-source sources](THIRD_PARTY_NOTICES.md). The original [prototype](prototype/README.md) remains a separate design reference and simulator.
 
