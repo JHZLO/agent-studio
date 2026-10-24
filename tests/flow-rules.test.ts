@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { initialState } from "../packages/contracts/defaults.js";
-import { flowSchema, settingsSchema, type Run, type Step } from "../packages/contracts/index.ts";
+import { flowSchema, revisionGroups, settingsSchema, type Run, type Step } from "../packages/contracts/index.ts";
 import { Studio } from "../packages/engine/studio.ts";
+import type { Toolbox } from "../packages/engine/tools.ts";
 import { Store } from "../packages/engine/store.ts";
 
 const rules = [
@@ -17,26 +19,33 @@ function output(step: Step, decision = "pass", status = "completed") {
   const names = step.agent.role === "planner" ? ["implementation-plan.md", "qa-sheet.md"] : [`${step.agent.role}.md`];
   return JSON.stringify({ summary: `${step.agent.name}: ${decision}`, status, decision, artifacts: names.map(name => ({ name, type: "Report", content: `${name} attempt ${step.attempt || 1}` })) });
 }
-async function fixture(t: test.TestContext, customRules: unknown[] = rules) {
+async function fixture(t: test.TestContext, customRules: unknown[] = rules, withTester = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "studio-flow-"))), cwd = join(root, "project");
   await mkdir(cwd); await writeFile(join(cwd, "README.md"), "Original");
   const store = new Store(join(root, "state.sqlite"));
   let studio = new Studio(store, root, join(root, "sockets"));
   const state = settingsSchema.parse({ ...initialState(), skillRoots: [], approvalRequired: false });
   state.agents = state.agents.slice(0, 3).map(a => ({ ...a, provider: "codex", tools: ["read"] }));
+  if (withTester) state.agents.push({ ...state.agents[2], id: "tester", name: "Tester", role: "backend", tools: ["read", "shell"] });
   state.flows = [flowSchema.parse({ id: "flow", name: "Fixture", workflow: state.agents.map(a => a.id), rules: customRules })];
   state.activeFlowId = "flow";
   state.projects = [{ id: "project", name: "Fixture", path: cwd, execution: { mode: "local", branchName: "" } }];
   store.set("settings", state);
   const calls: { step: Step; prompt: string }[] = [];
-  let result = (step: Step) => output(step);
+  let result: (step: Step) => string | Promise<string> = step => output(step);
+  const server = createServer((_req, res) => { res.end("Fixture test evidence"); });
+  if (withTester) await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const install = () => {
     studio.connections.assertAgent = async () => {};
     studio.catalog.scan = async () => ({ skills: [], sources: [], errors: [] }) as any;
-    t.mock.method(studio as any, "codexTurn", async (_run: Run, step: Step, prompt: string) => { calls.push({ step: structuredClone(step), prompt }); return result(step); });
+    t.mock.method(studio as any, "codexTurn", async (_run: Run, step: Step, prompt: string, tools: Toolbox) => {
+      calls.push({ step: structuredClone(step), prompt });
+      if (step.agent.role === "backend") await tools.call("studio_http", { url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, method: "GET", body: "", headers: {} });
+      return result(step);
+    });
   };
   install();
-  t.after(async () => { await studio.close(); store.close(); await rm(root, { recursive: true, force: true }); });
+  t.after(async () => { if (withTester) await new Promise<void>(resolve => server.close(() => resolve())); await studio.close(); store.close(); await rm(root, { recursive: true, force: true }); });
   return {
     root, cwd, store, calls, get studio() { return studio; }, result(fn: typeof result) { result = fn; },
     async start() { return await studio.dispatch("run.start", { projectId: "project", flowId: "flow", brief: "Test flow rules", commandId: "start" }) as Run; },
@@ -217,4 +226,68 @@ test("Human approval leaves tool permissions intact and cancellation rejects lat
   await f.studio.dispatch("run.control", { id: started.id, action: "cancel" });
   await assert.rejects(f.review(review), /no longer active/);
   assert.equal(f.store.run(started.id)!.status, "cancelled");
+});
+
+const sharedRules = [rules[0], ...["reviewer", "tester"].map(after => ({ after, loop: { target: "coder", maxCycles: 2, onLimit: "review" } }))];
+const finding = { title: "Duplicate reward", severity: "high", location: "RewardService.kt:42", reproduction: "Send concurrent requests with the same key", expected: "One reward", actual: "Two rewards", evidence: [] };
+
+test("Shared revision groups accept one target and require one budget and limit action", () => {
+  const base = { id: "flow", name: "Flow", workflow: ["planner", "coder", "reviewer", "tester"], rules: sharedRules };
+  assert.deepEqual(revisionGroups(flowSchema.parse(base)), [{ target: "coder", members: ["reviewer", "tester"], maxCycles: 2, onLimit: "review", key: "shared:coder" }]);
+  for (const patch of [{ maxCycles: 3 }, { onLimit: "stop" }]) {
+    const changed = structuredClone(base);
+    Object.assign(changed.rules[2].loop!, patch);
+    assert.equal(flowSchema.safeParse(changed).success, false);
+  }
+  assert.equal(revisionGroups(flowSchema.parse({ ...base, rules }))[0].key, "reviewer");
+});
+
+test("Reviewer and tester share one persisted revision budget and carry evidence through rechecks", async t => {
+  const f = await fixture(t, sharedRules, true);
+  f.result(async step => {
+    if (step.agent.role === "coder") await writeFile(join(f.cwd, "code.txt"), `Implementation ${step.attempt || 1}`);
+    const revise = step.agent.id === "tester" || (step.agent.id === "reviewer" && !step.attempt);
+    const result = JSON.parse(output(step, revise ? "revise" : "pass"));
+    result.findings = revise ? [finding] : [];
+    return JSON.stringify(result);
+  });
+  const started = await f.start(); await f.review(await f.wait(started.id, "waiting_review"));
+  const limit = await f.wait(started.id, "waiting_review");
+  assert.equal(limit.review?.kind, "loop_limit");
+  assert.deepEqual(f.calls.map(c => c.step.agent.id), ["planner", "coder", "reviewer", "coder", "reviewer", "tester", "coder", "reviewer", "tester"]);
+  assert.equal(limit.loopCounts?.["shared:coder"], 2);
+  assert.deepEqual(limit.revisionHistory?.map(r => [r.sourceAgentId, r.targetAgentId, r.cycle]), [["reviewer", "coder", 1], ["tester", "coder", 2]]);
+  assert.equal(new Set(f.calls.map(c => c.step.sessionId)).size, f.calls.length);
+  assert.equal(limit.cwd, f.cwd); assert.equal(limit.lockedPlan?.version, 1);
+  assert.equal(limit.revisionHistory?.[0].findings[0].title, finding.title);
+  assert.notEqual(limit.revisionHistory?.[0].codeReference, limit.revisionHistory?.[1].codeReference);
+  for (const call of f.calls.slice(6)) {
+    assert.ok(limit.revisionHistory!.every(r => r.artifactIds.every(id => call.step.feedbackArtifactIds?.includes(id))));
+    assert.match(call.prompt, /prior pass is not proof/);
+  }
+  assert.ok(limit.revisionHistory!.every(r => r.artifactIds.every(id => limit.artifacts.find(a => a.id === id)?.superseded)));
+  await f.restart();
+  assert.deepEqual(f.store.run(started.id)!.revisionHistory, limit.revisionHistory);
+  f.result(step => output(step));
+  await f.review(limit, "request-revision", "Fix the last duplicate case and recheck all findings");
+  const done = await f.wait(started.id, "succeeded");
+  assert.equal(done.loopCounts?.["shared:coder"], 2);
+  assert.equal(done.revisionHistory?.at(-1)?.automatic, false);
+  assert.deepEqual(f.calls.slice(-3).map(c => c.step.agent.id), ["coder", "reviewer", "tester"]);
+  assert.ok(done.artifacts.some(a => a.name === "backend-evidence.json" && a.verified && !a.superseded));
+});
+
+test("Revisiting the plan clears the old lock and requires a new approval", async t => {
+  const f = await fixture(t, sharedRules, true);
+  f.result(step => output(step, step.agent.id === "tester" ? "revise" : "pass"));
+  const started = await f.start(); await f.review(await f.wait(started.id, "waiting_review"));
+  const limit = await f.wait(started.id, "waiting_review");
+  f.result(step => output(step));
+  await f.review(limit, "replan-review", "Decide on the transaction boundary together");
+  const plan = await f.wait(started.id, "waiting_review");
+  assert.equal(plan.lockedPlan, undefined); assert.equal(plan.review?.lockOutputs, true);
+  assert.equal(plan.steps[1].status, "queued"); assert.equal(plan.steps[0].attempt, 2);
+  assert.equal(plan.revisionHistory?.at(-1)?.targetAgentId, "planner");
+  await f.review(plan); const done = await f.wait(started.id, "succeeded");
+  assert.equal(done.lockedPlan?.version, 2); assert.equal(done.loopCounts?.["shared:coder"], 2);
 });

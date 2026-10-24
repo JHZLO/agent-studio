@@ -17,13 +17,23 @@ export const flowRuleSchema = z.object({
   lockOutputs: z.boolean().default(false), returnTo: z.string().optional(),
   loop: z.object({ target: z.string(), maxCycles: z.number().int().min(1).max(10), onLimit: z.enum(["review", "stop"]) }).optional(),
 });
+export function revisionGroups(flow: { workflow: string[]; rules?: z.infer<typeof flowRuleSchema>[] }) {
+  const groups = new Map<string, { target: string; members: string[]; maxCycles: number; onLimit: "review" | "stop" }>();
+  for (const rule of flow.rules ?? []) if (rule.loop) {
+    const group = groups.get(rule.loop.target) ?? { ...rule.loop, members: [] };
+    group.members.push(rule.after); groups.set(group.target, group);
+  }
+  return [...groups.values()].map(group => {
+    group.members.sort((a, b) => flow.workflow.indexOf(a) - flow.workflow.indexOf(b));
+    return { ...group, key: group.members.length === 1 ? group.members[0] : `shared:${group.target}` };
+  });
+}
 export const flowSchema = z.object({
   id: z.string().min(1).max(100), name: z.string().trim().min(1).max(100), workflow: z.array(z.string()).max(12), archived: z.boolean().default(false),
   revision: z.number().int().positive().default(1), rules: z.array(flowRuleSchema).max(12).default([]),
 }).superRefine((flow, ctx) => {
   const issue = (message: string) => ctx.addIssue({ code: "custom", message });
   if (new Set(flow.rules.map(rule => rule.after)).size !== flow.rules.length) issue("Each step can have only one flow rule.");
-  const ranges: number[][] = [];
   for (const rule of flow.rules) {
     const end = flow.workflow.indexOf(rule.after);
     if (end < 0) issue("Flow rules must reference a step in this flow.");
@@ -32,9 +42,14 @@ export const flowSchema = z.object({
     if (rule.loop) {
       const start = flow.workflow.indexOf(rule.loop.target);
       if (start < 0 || start >= end) issue("A loop must return to an earlier step.");
-      if (ranges.some(([a, b]) => start <= b && end >= a)) issue("Loop ranges cannot overlap. Use one loop for the shared steps.");
-      ranges.push([start, end]);
+      if (flow.rules.some(other => other.loop?.target === rule.loop!.target && (other.loop.maxCycles !== rule.loop!.maxCycles || other.loop.onLimit !== rule.loop!.onLimit))) issue("Steps returning to the same agent must share the revision limit and limit action.");
     }
+  }
+  const ranges: number[][] = [];
+  for (const group of revisionGroups(flow)) {
+    const start = flow.workflow.indexOf(group.target), end = Math.max(...group.members.map(id => flow.workflow.indexOf(id)));
+    if (ranges.some(([a, b]) => start <= b && end >= a)) issue("Loop ranges with different return targets cannot overlap.");
+    ranges.push([start, end]);
   }
 });
 export const settingsSchema = z.object({
@@ -65,6 +80,9 @@ export type LocalProject = { key: string; name: string; path: string; providers:
 export type LocalSession = { key: string; provider: "codex" | "claude"; sourceId: string; title: string; projectKey: string; cwd: string; updatedAt: string };
 export type ImportedSession = LocalSession & { project: Project; importedAt: string; messages: Message[]; truncated: boolean };
 export type Artifact = { id: string; name: string; type: string; content: string; agent: string; stepId: string; codeReference?: string; mediaPath?: string; mime?: string; verified?: boolean; stale?: boolean; superseded?: boolean };
+export const findingSchema = z.object({ title: z.string().min(1).max(500), severity: z.enum(["critical", "high", "medium", "low"]), location: z.string().max(1000), reproduction: z.string().min(1).max(4000), expected: z.string().min(1).max(2000), actual: z.string().min(1).max(2000), evidence: z.array(z.string().max(500)).max(12) });
+export type Finding = z.infer<typeof findingSchema> & { id: string };
+export type Revision = { id: string; sourceStepId: string; sourceAgentId: string; targetAgentId: string; summary: string; artifactIds: string[]; findings: Finding[]; automatic: boolean; createdAt: string; codeReference?: string; cycle?: number; maxCycles?: number };
 export type Step = { id: string; agent: Agent; status: Status; sessionId: string; messages: Message[]; receivedArtifacts: { id: string; name: string }[]; providerThreadId?: string; activeTurnId?: string; lastTurnId?: string; socketPath?: string; hostPid?: number; connectionGeneration?: string; accountFingerprint?: string; actualModel?: string; actualServiceTier?: string; codeReference?: string; usage?: Record<string, unknown>; finalText?: string; completedAt?: string; attempt?: number; feedback?: string; feedbackArtifactIds?: string[]; reviewRequired?: boolean; decision?: "pass" | "revise" | "scope_change" };
 export type FlowReview = { id: string; stepId: string; kind: "checkpoint" | "issue" | "loop_limit" | "scope_change"; artifactIds: string[]; fingerprint: string; version: number; returnTo: string; lockOutputs: boolean; summary: string; createdAt: string; codeReference: string };
 export type Approval = { id: string; stepId: string; kind: "write" | "shell" | "network" | "provider"; description: string; details: string; generation?: string; requestId?: string | number; method?: string };
@@ -72,6 +90,7 @@ export type AgentMessage = { id: string; stepId: string; message: string; mode: 
 export type Run = { id: string; brief: string; project: Project; projectRules?: string[]; flow: z.infer<typeof flowSchema>; status: Status; createdAt: string; completedAt?: string; index: number; steps: Step[]; artifacts: Artifact[]; note: string; cwd: string; baseHead: string | null; approvalRequired: boolean; approval?: Approval; approved: boolean; pauseRequested: boolean; controlMode: "studio" | "terminal" | "switching"; eventSeq: number; terminal?: { id: string; stepId: string; connected: boolean; socketPath?: string; pid?: number }; commandId: string;
   review?: FlowReview; reviewHistory?: (FlowReview & { action: "approved" | "revision_requested"; feedback?: string; resolvedAt: string })[];
   stepHistory?: Step[]; loopCounts?: Record<string, number>; lockedPlan?: { version: number; stepId: string; artifactIds: string[] };
+  revisionHistory?: Revision[];
   followup?: { id: string; stepId: string; message: string; startedAt: string; previousStatus: Status; previousStepStatus: Status; previousNote: string; previousFinalText?: string; codeReference: string; turnId?: string; stopRequested?: boolean };
   acceptingMessages?: boolean; pendingMessages?: AgentMessage[]; activeMessage?: AgentMessage; interruptRequested?: boolean;
 };
