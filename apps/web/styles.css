@@ -208,8 +208,8 @@ input:disabled { color: var(--muted); background: var(--cream); }
 .select-option.active { border-color: var(--ink); background: var(--cream-2); }
 .select-option.active[aria-selected="true"] { background: var(--lavender); }
 .select-option[aria-disabled="true"] { color: var(--muted); opacity: .55; cursor: not-allowed; }
-.task-composer textarea { border: 0; background: transparent; resize: vertical; font-family: var(--font-display); font-size: 23px; line-height: 1.5; padding: 20px 2px 12px; min-height: 170px; color: var(--ink); border-radius: 0; box-shadow: none; }
-.task-composer textarea::placeholder { color: #b3a9bf; font-style: italic; }
+.task-composer textarea { border: 0; background: transparent; resize: vertical; font-family: var(--font-sans); font-size: 16px; line-height: 1.65; padding: 20px 2px 12px; min-height: 170px; color: var(--ink); border-radius: 0; box-shadow: none; }
+.task-composer textarea::placeholder { color: #b3a9bf; }
 .task-composer textarea:focus-visible { outline: none; box-shadow: none; }
 .composer-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-top: 12px; border-top: 1.5px dashed var(--line-2); }
 .crew-picker { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 5px 12px 5px 6px; border: 1.5px solid transparent; border-radius: 999px; background: transparent; text-align: left; }
@@ -409,7 +409,7 @@ input[type="checkbox"]:not(.worktree-option input):disabled { opacity: .45; curs
 /* Task run */
 .run-heading { margin-bottom: 22px; }
 .run-heading > .btn { margin-left: -12px; margin-bottom: 10px; }
-.run-heading h1 { font-family: var(--font-display); font-size: 34px; line-height: 1.2; letter-spacing: -.8px; font-weight: 700; max-width: 920px; }
+.run-heading h1 { font-family: var(--font-sans); font-size: 18px; line-height: 1.65; letter-spacing: normal; font-weight: 500; max-width: 920px; }
 .run-heading .subtitle { margin-top: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
 .run-heading .subtitle > svg { width: 14px; height: 14px; }
 .next-action { position: relative; display: flex; gap: 16px; align-items: center; padding: 18px 22px; background: var(--agent-bg, var(--lavender)); border: 1.5px solid var(--ink); border-radius: 24px; box-shadow: 5px 5px 0 var(--ink); overflow: hidden; }
@@ -824,7 +824,7 @@ dialog::backdrop { background: #2b223852; backdrop-filter: blur(4px); }
   .computer-label { display: none; }
   .composer-location { flex: 1; }
   .task-start { padding-top: 6px; }
-  .task-composer textarea { font-size: 19px; min-height: 160px; padding-top: 16px; }
+  .task-composer textarea { min-height: 160px; padding-top: 16px; }
   .crew-picker { flex: 1; }
   .start-task { width: 100%; }
   .section-title h2 { font-size: 18px; }
@@ -845,7 +845,7 @@ dialog::backdrop { background: #2b223852; backdrop-filter: blur(4px); }
   .flow-meta .meta { font-size: 10px; }
   .team-footer { flex-direction: column; gap: 9px; }
   .team-footer span { font-size: 11px; }
-  .run-heading h1 { font-size: 26px; }
+  .run-heading h1 { font-size: 16px; }
   .run-heading .subtitle { font-size: 11px; }
   .next-action { padding: 16px; gap: 12px; }
   .next-action-icon { display: none; }
