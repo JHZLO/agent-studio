@@ -27,7 +27,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     sessionTab: "conversation", reviewDraft: "", reviewId: null, step: 0, followRun: true, historyId: null,
     linkFrom: null, zoom: null, connectProvider: "codex", connectAuth: "subscription",
     skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", editingAgentId: null, starting: false,
-    navigationOpen: false, navigationActions: false,
+    navigationOpen: false, navigationActions: false, expandedProjects: new Set([state.activeProjectId].filter(Boolean)),
     projectDraft: null, folderRequest: null, folderListing: null,
     importCatalog: null, importRequest: null, importProjects: new Set(), importedSession: null,
   };
@@ -129,7 +129,10 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       if (run.status === "succeeded" && previous && previous !== "succeeded") celebrate();
     }
     if (["home", "runs"].includes(ui.view) || (ui.view === "run" && currentRun()?.id === run.id)) render(true);
-    else for (const element of document.querySelectorAll("[data-active-count]")) element.textContent = t`${engine.activeRuns.size} active / limit ${state.maxConcurrentRuns}`;
+    else {
+      for (const element of document.querySelectorAll("[data-active-count]")) element.textContent = t`${engine.activeRuns.size} active / limit ${state.maxConcurrentRuns}`;
+      refreshProjectNavigation();
+    }
   }
 
   function stamp(text) {
@@ -185,6 +188,34 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     return html`<button type="button" class="nav-item ${active ? "active" : ""}" data-action="navigate" data-view="${view}" aria-label="${name}" title="${name}" ${active ? 'aria-current="page"' : ""}>${icon(iconName)}<span class="nav-item-label">${name}</span>${count !== null ? html`<span class="nav-count">${count}</span>` : ""}</button>`;
   }
 
+  function projectNavigation() {
+    const selectedRun = ui.view === "run" ? currentRun() : null;
+    return state.projects.map(project => {
+      const runs = [...engine.activeRuns.values()].filter(run => run.project.id === project.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const expanded = ui.expandedProjects.has(project.id), listId = `project-tasks-${encodeURIComponent(project.id)}`;
+      const current = selectedRun?.project.id === project.id || (ui.view === "home" && project.id === state.activeProjectId);
+      return html`<div class="project-branch" data-project-id="${escape(project.id)}"><button type="button" class="nav-item project-item ${current ? "project-current" : ""}" data-action="toggle-project" data-id="${escape(project.id)}" aria-label="Active tasks in ${escape(project.name)} (${runs.length})" title="${escape(project.path)}" aria-expanded="${expanded}" aria-controls="${listId}">${icon("folder")}<span class="nav-item-label">${escape(project.name)}</span><span class="nav-count">${runs.length}</span><span class="project-chevron">${icon("chevron")}</span></button><div id="${listId}" class="project-task-list" ${expanded ? "" : "hidden"}>
+        ${runs.map(run => html`<button type="button" class="project-task ${selectedRun?.id === run.id ? "active" : ""}" data-action="open-run" data-id="${escape(run.id)}" aria-label="Open task: ${escape(run.brief)}" title="${escape(run.brief)} - ${t(statusNames[run.status])}" ${selectedRun?.id === run.id ? 'aria-current="page"' : ""}>${icon("message")}<span class="project-task-copy"><span class="project-task-title">${escape(run.brief)}</span>${statusBadge(run.status)}</span></button>`).join("") || html`<p class="project-tasks-empty">No active tasks</p>`}
+        <button type="button" class="project-new-task" data-action="select-project" data-id="${escape(project.id)}" aria-label="New task in ${escape(project.name)}" title="New task in ${escape(project.name)}">${icon("plus")}<span>New task</span></button></div></div>`;
+    }).join("") || html`<button class="nav-item" data-action="new-project" aria-label="Add project" title="Add project">${icon("folder")}<span class="nav-item-label">Add project</span></button>`;
+  }
+
+  function refreshProjectNavigation() {
+    const tree = app.querySelector(".project-tree");
+    if (!tree) return;
+    const focused = tree.contains(document.activeElement) ? document.activeElement : null;
+    const projectId = focused?.closest(".project-branch")?.dataset.projectId;
+    const nav = tree.closest(".nav"), scrollTop = nav.scrollTop;
+    tree.innerHTML = projectNavigation();
+    if (focused) {
+      const controls = [...tree.querySelectorAll("button")];
+      const next = controls.find(button => button.dataset.action === focused.dataset.action && button.dataset.id === focused.dataset.id)
+        || controls.find(button => button.dataset.action === "toggle-project" && button.dataset.id === projectId);
+      next?.focus({ preventScroll: true });
+    }
+    nav.scrollTop = scrollTop;
+  }
+
   function sidebar() {
     const collapsed = Boolean(state.navigationCollapsed);
     return html`<div class="mobile-menu-bar"><span class="mobile-brand">${brandMark}Agent Studio</span><button class="nav-control" data-action="open-navigation" aria-label="Open navigation" aria-controls="studio-navigation" aria-expanded="${ui.navigationOpen}">${icon("menu")}</button></div><button class="navigation-backdrop" data-action="close-navigation" aria-label="Close navigation overlay" tabindex="-1" ${ui.navigationOpen ? "" : "hidden"}></button>
@@ -193,7 +224,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
       <nav class="nav" aria-label="Main navigation">
         ${navItem("home", "New task", "plus")}
         <div class="nav-group" role="group" aria-label="Work"><div class="nav-label">Work</div>${navItem("runs", "Tasks", "clock", state.history.length + (state.run ? 1 : 0))}${state.importedSessions.length ? navItem("imported", "Imported sessions", "message", state.importedSessions.length) : ""}</div>
-        <div class="nav-group project-nav" role="group" aria-label="Projects"><div class="project-nav-heading"><span class="nav-label">Projects</span><div class="project-nav-actions"><button class="nav-control" data-action="import-local" aria-label="Import local projects" title="Import local projects">${icon("download")}</button><button class="nav-control" data-action="new-project" aria-label="Create project" title="Create project">${icon("plus")}</button></div></div>${state.projects.map(project => html`<button class="nav-item project-item ${ui.view === "home" && project.id === state.activeProjectId ? "project-current" : ""}" data-action="select-project" data-id="${escape(project.id)}" aria-label="Open project ${escape(project.name)}" title="${escape(project.path)}">${icon("folder")}<span class="nav-item-label">${escape(project.name)}</span></button>`).join("") || html`<button class="nav-item" data-action="new-project" aria-label="Add project" title="Add project">${icon("folder")}<span class="nav-item-label">Add project</span></button>`}</div>
+        <div class="nav-group project-nav" role="group" aria-label="Projects"><div class="project-nav-heading"><span class="nav-label">Projects</span><div class="project-nav-actions"><button class="nav-control" data-action="import-local" aria-label="Import local projects" title="Import local projects">${icon("download")}</button><button class="nav-control" data-action="new-project" aria-label="Create project" title="Create project">${icon("plus")}</button></div></div><div class="project-tree">${projectNavigation()}</div></div>
         <div class="nav-group" role="group" aria-label="Build"><div class="nav-label">Build</div>${navItem("team", "Flows", "flow")}${navItem("agents", "Agent library", "agents")}${navItem("skills", "Skill library", "grid")}</div>
         <div class="nav-group" role="group" aria-label="Settings"><div class="nav-label">Settings</div>${navItem("connections", "Connections", "plug")}${navItem("defaults", "Defaults", "sliders")}</div>
       </nav><div class="sidebar-bottom"><div class="sidebar-actions"><button class="nav-utility" data-action="help" aria-label="How Agent Studio works" title="Quick guide">${icon("help")}<span>Quick guide</span></button><button class="nav-control" data-action="navigation-actions" aria-label="Workspace actions" title="Workspace actions" aria-expanded="${ui.navigationActions}" aria-controls="navigation-actions">${icon("more")}</button><div id="navigation-actions" class="navigation-actions" ${ui.navigationActions ? "" : "hidden"}><span class="nav-label">Workspace controls</span><button class="nav-reset" data-action="reset" aria-label="Reset workspace">${icon("reset")}<span>Reset workspace<small>Clear presets and run history</small></span></button></div></div>
@@ -235,7 +266,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     const focused = document.activeElement;
     const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
     const preserved = live ? [document.getElementById("task-brief"), document.getElementById("flow-rule-form")] : [];
-    const scrollPositions = live ? [...document.querySelectorAll(".session-content, .evidence-body, .run-steps, .canvas-viewport, .sidebar")].map(element => [element.className, element.scrollTop, element.scrollLeft]) : [];
+    const scrollPositions = live ? [...document.querySelectorAll(".session-content, .evidence-body, .run-steps, .canvas-viewport, .sidebar, .nav")].map(element => [element.className, element.scrollTop, element.scrollLeft]) : [];
     const viewNames = { home: "New task", team: "Flows", run: "Task details", agents: "Agent library", skills: "Skill library", connections: "AI connections", runs: "Tasks", imported: "Imported sessions", defaults: "Workspace defaults" };
     const entering = renderedView !== ui.view;
     app.innerHTML = html`<div class="shell ${state.navigationCollapsed ? "sidebar-collapsed" : ""} ${ui.navigationOpen ? "navigation-open" : ""}">${sidebar()}<div class="main" tabindex="-1"><header class="topbar"><div class="crumbs">Workspace ${icon("chevron")}<strong>${t(viewNames[ui.view])}</strong></div><span class="prototype-pill">${icon("terminal")}Local workspace<span class="topbar-avatar">J</span></span></header><main id="main-content" class="page page-${ui.view}${entering ? " page-enter" : ""}">${ui.view === "home" ? homeView() : ui.view === "team" ? teamView() : ui.view === "run" ? runView() : ui.view === "agents" ? agentsView() : ui.view === "skills" ? skillsView() : ui.view === "connections" ? connectionsView() : ui.view === "runs" ? runsView() : ui.view === "imported" ? importedSessionsView() : defaultsView()}</main></div></div>`;
@@ -922,6 +953,10 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     else if (action === "open-navigation") { ui.navigationOpen = true; render(true); app.querySelector(".mobile-nav-close").focus(); }
     else if (action === "close-navigation") closeNavigation();
     else if (action === "navigation-actions") { ui.navigationActions = !ui.navigationActions; render(true); }
+    else if (action === "toggle-project") {
+      if (ui.expandedProjects.has(id)) ui.expandedProjects.delete(id); else ui.expandedProjects.add(id);
+      refreshProjectNavigation();
+    }
     else if (action === "project-picker") projectPicker();
     else if (action === "import-local") await localImportModal();
     else if (action === "confirm-local-import") {
@@ -1181,13 +1216,15 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     else if (action === "terminal-command") showModal(t("Open the same terminal"), html`<p>From the Agent Studio folder, run:</p><pre class="artifact-preview">./studio terminal ${escape(currentRun().id)}</pre><p>The terminal process stays alive when either view disconnects. Exit the Codex terminal before returning control to Studio.</p>`, button("close-modal", "Close", ""));
     else if (action === "toggle-approval") { state.approvalRequired = !state.approvalRequired; persist(); render(); toast("Default saved for the next run."); }
     else if (action === "open-run") {
+      const fromDrawer = mobileNavigation.matches && ui.navigationOpen;
       const entry = state.history.find(run => run.id === id);
       if (entry?.summary) {
         try { Object.assign(entry, await request("/api/runs/read", { id }), { summary: false }); }
         catch (error) { toast(error.message); return; }
       }
       ui.historyId = state.run?.id === id ? null : id;
-      ui.view = "run"; ui.step = 0; ui.followRun = false; ui.artifactId = null; ui.sessionTab = currentRun()?.review ? "review" : "conversation"; if (currentRun()?.review) ui.step = currentRun().steps.findIndex(s => s.id === currentRun().review.stepId); render();
+      ui.view = "run"; ui.step = 0; ui.followRun = false; ui.artifactId = null; ui.navigationOpen = false; ui.navigationActions = false; ui.sessionTab = currentRun()?.review ? "review" : "conversation"; if (currentRun()?.review) ui.step = currentRun().steps.findIndex(s => s.id === currentRun().review.stepId); render();
+      if (fromDrawer) app.querySelector(".main").focus({ preventScroll: true });
     }
     else if (action === "artifact") {
       const artifact = findArtifact(id);

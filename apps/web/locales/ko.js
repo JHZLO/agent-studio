@@ -1,4 +1,8 @@
 export default {
+  "Active tasks in {0} ({1})": "{0} 프로젝트의 진행 중인 작업 ({1}개)",
+  "New task in {0}": "{0}에서 새 작업",
+  "No active tasks": "진행 중인 작업이 없습니다",
+  "Open task: {0}": "작업 열기: {0}",
   "Review the plan together": "플래너와 계획 검토하기",
   "Questions or changes for the plan": "계획에 대한 질문 또는 수정 요청",
   "Ask questions or request changes below. Planner will return a new draft. Coder stays queued until you lock the plan and continue.": "아래에 질문이나 수정할 내용을 적어주세요. 플래너가 새 초안을 작성합니다. 계획을 확정하고 계속하기 전까지 코더는 대기합니다.",

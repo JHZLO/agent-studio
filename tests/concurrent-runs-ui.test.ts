@@ -54,7 +54,7 @@ test("Concurrency settings persist and real API events keep two task controls is
   await expect(page.locator('[data-action="run"]')).toHaveText("작업 실행");
   const open = async (target: typeof page, id: string) => {
     await target.getByRole("button", { name: "작업", exact: true }).click();
-    await target.locator(`[data-action="open-run"][data-id="${id}"]`).click();
+    await target.locator(`.history-table [data-action="open-run"][data-id="${id}"]`).click();
   };
   await open(page, "a");
   const observer = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); observer.setDefaultTimeout(5000); observer.on("pageerror", error => errors.push(error.message));

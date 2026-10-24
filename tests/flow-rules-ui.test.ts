@@ -112,7 +112,7 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   await page.getByText("Compare with previous draft", { exact: true }).first().click();
   await expect(page.locator(".review-diff").first()).toContainText("draft 1");
   await page.reload();
-  await page.getByRole("button", { name: /Implement a duplicate-safe request/ }).click();
+  await page.locator(".recent-work").getByRole("button", { name: /Implement a duplicate-safe request/ }).click();
   await page.getByRole("button", { name: "Review outputs", exact: true }).click();
   await expect(page.locator(".review-heading")).toContainText("Draft 2");
   await page.getByRole("button", { name: "Lock only", exact: true }).click();
@@ -134,7 +134,7 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   assert.equal(flow().rules[1].loop?.maxCycles, 4);
   assert.equal(store.state().run.flow.rules[1].loop.maxCycles, 1);
   await page.locator('[data-action="navigate"][data-view="runs"]').click();
-  await page.locator(`[data-action="open-run"][data-id="${store.state().run.id}"]`).click();
+  await page.locator(`.history-table [data-action="open-run"][data-id="${store.state().run.id}"]`).click();
   await page.getByRole("button", { name: "Review outputs", exact: true }).click();
   reviewerPasses = true;
   await page.locator("#review-feedback").fill("Use an atomic claim before processing");

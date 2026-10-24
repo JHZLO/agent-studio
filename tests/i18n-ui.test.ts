@@ -66,7 +66,7 @@ test("Korean UI persists its language while keeping agent data and review contro
   await expect.poll(async () => (await current()).agents[1].name).toBe("한글 코더");
   assert.equal((await current()).agents[1].prompt, "기존 동작을 유지하세요. New task");
   await page.getByRole("button", { name: "작업", exact: true }).click();
-  await page.locator('[data-action="open-run"][data-id="locale-review"]').click();
+  await page.locator('.history-table [data-action="open-run"][data-id="locale-review"]').click();
   await expect(page.getByRole("heading", { name: "New task", exact: true }).first()).toBeVisible();
   await expect(page.locator(".review-document pre").first()).toHaveText(artifact.content);
   await expect(page.getByRole("button", { name: "확정 후 계속", exact: true })).toBeVisible();
