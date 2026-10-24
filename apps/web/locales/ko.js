@@ -1,4 +1,8 @@
 export default {
+  "Elapsed": "경과",
+  "Duration": "소요",
+  "Timing unavailable": "시간 기록 없음",
+  "Time from the first session event to completion, including tool approval waits. Review after completion is excluded.": "세션 시작부터 완료까지의 시간입니다. 도구 승인 대기는 포함하고, 완료 후 산출물 검토 대기는 제외합니다.",
   "Active tasks in {0} ({1})": "{0} 프로젝트의 진행 중인 작업 ({1}개)",
   "New task in {0}": "{0}에서 새 작업",
   "No active tasks": "진행 중인 작업이 없습니다",

@@ -469,6 +469,13 @@ input[type="checkbox"]:not(.worktree-option input):disabled { opacity: .45; curs
 .session-head h2 { font-family: var(--font-display); font-size: 19px; }
 .session-head p { margin-top: 3px; font-size: 11.5px; color: var(--muted); }
 .session-head .badge { font-size: 10.5px; }
+.session-head-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.session-duration { display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; border: 1px solid var(--line-2); border-radius: 999px; color: var(--ink-2); font-size: 11px; white-space: nowrap; }
+.session-duration > .icon { width: 13px; height: 13px; }
+.session-duration time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.session-duration.compact { padding: 0; border: 0; margin-top: 5px; font-size: 10px; }
+.session-duration.muted { color: var(--muted); }
+.attempts-list summary .session-duration { margin: 0 0 0 8px; vertical-align: middle; }
 .session-tabs { display: flex; gap: 6px; padding: 12px 18px; border-bottom: 1.5px dashed var(--line-2); }
 .tab { border: 1.5px solid transparent; background: transparent; padding: 6px 13px; border-radius: 999px; color: var(--ink-2); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .tab:hover { background: var(--cream-2); }
@@ -876,7 +883,7 @@ dialog::backdrop { background: #2b223852; backdrop-filter: blur(4px); }
   .run-steps { grid-row: auto; border-right: 0; border-bottom: 1.5px solid var(--ink); display: flex; overflow-x: auto; padding: 10px; gap: 6px; }
   .run-steps .eyebrow, .session-legend { display: none; }
   .run-step { min-width: 140px; width: auto; margin: 0; padding: 10px 9px; }
-  .session-head { flex-wrap: nowrap; }
+  .session-head { flex-wrap: wrap; }
   .session-head, .session-content { padding: 16px; }
   .session-content { max-height: 420px; }
   .message { max-width: 100%; }

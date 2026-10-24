@@ -5,6 +5,7 @@ import { initial, StudioEngine, request, queueSettings, flush, reset, removeProj
 import "./skills.js";
 import { retainTerminal, mountTerminal, closeTerminalView } from "./terminal.js";
 import { enhanceSelects, closeSelects } from "./selects.js";
+import { sessionTiming, formatDuration } from "./session-time.js";
 (() => {
   "use strict";
 
@@ -260,6 +261,8 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     app.querySelector('[data-action="navigation-actions"]')?.setAttribute("aria-expanded", "false");
   }
 
+  let sessionClockTimer;
+
   function render(live = false) {
     closeSelects(app);
     const retainedTerminal = ui.view === "run" && ui.sessionTab === "terminal" ? retainTerminal() : null;
@@ -274,6 +277,9 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     if (terminalElement && retainedTerminal?.dataset.session === terminalElement.dataset.session) terminalElement.replaceWith(retainedTerminal);
     if (terminalElement) mountTerminal(currentRun().id, document.getElementById("studio-terminal")); else closeTerminalView();
     syncNavigation();
+    clearInterval(sessionClockTimer);
+    updateSessionClocks();
+    if (app.querySelector('[data-session-clock][data-live="true"]')) sessionClockTimer = setInterval(updateSessionClocks, 1000);
     for (const panel of preserved) {
       if (!panel) continue;
       const next = app.querySelector(`#${panel.id}`);
@@ -631,7 +637,23 @@ import { enhanceSelects, closeSelects } from "./selects.js";
     const actionMark = ["running", "waiting_approval", "paused"].includes(run.status) ? agentIcon(activeStep.agent, true, mood(activeStep)) : icon(run.status === "succeeded" ? "check" : run.status === "failed" ? "alert" : "activity");
     return html`<section class="next-action ${["waiting_approval", "waiting_review"].includes(run.status) ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${t(nextAction)}</h2><p>${detail}</p>${run.approval ? html`<pre class="approval-details">${escape(run.approval.details)}</pre>` : ""}</div><div class="actions">${approvalActions}</div></section>
       <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Flow v${run.flow.revision || 1}${run.lockedPlan ? t` / Approved plan v${run.lockedPlan.version}` : ""}${Object.entries(run.loopCounts || {}).map(([id, count]) => t` / ${escape(run.steps.find(s => s.agent.id === id)?.agent.name)} revisions ${count}/${run.flow.rules?.find(r => r.after === id)?.loop?.maxCycles}`).join("")}</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => html`<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
-      <section class="panel run-grid"><aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small></span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div>${followControl}</div><nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, run) : ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div><div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${evidenceView(run)}</section>`;
+      <section class="panel run-grid"><aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, run)}${followControl}</div></div><nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, run) : ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div><div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${evidenceView(run)}</section>`;
+  }
+
+  function sessionClock(step, run, compact = false) {
+    const timing = sessionTiming(step, run);
+    if (["pending", "unavailable"].includes(timing.kind)) return compact ? "" : html`<span class="session-duration muted">${icon("clock")}${t(timing.kind === "pending" ? "Not started" : "Timing unavailable")}</span>`;
+    const live = timing.kind === "running";
+    return html`<span class="session-duration ${compact ? "compact" : ""}" title="Time from the first session event to completion, including tool approval waits. Review after completion is excluded.">${icon("clock")}<span>${t(live ? "Elapsed" : "Duration")} <time role="timer" aria-live="off" data-session-clock data-live="${live}" data-session-start="${timing.start}" data-session-end="${timing.end ?? ""}">${formatDuration((timing.end ?? Date.now()) - timing.start)}</time></span></span>`;
+  }
+
+  function updateSessionClocks() {
+    const now = Date.now();
+    for (const clock of app.querySelectorAll("[data-session-clock]")) {
+      const elapsed = Math.max(0, (clock.dataset.sessionEnd ? Number(clock.dataset.sessionEnd) : now) - Number(clock.dataset.sessionStart));
+      clock.textContent = formatDuration(elapsed);
+      clock.setAttribute("datetime", `PT${Math.floor(elapsed / 1000)}S`);
+    }
   }
 
   function usageLabel(step) {
@@ -664,7 +686,7 @@ import { enhanceSelects, closeSelects } from "./selects.js";
 
   function attemptsView(step, run) {
     const attempts = [...(run.stepHistory || []).filter(item => item.agent.id === step.agent.id), step];
-    return html`<div class="attempts-list"><p class="meta">Each revision uses a fresh session. Earlier conversations and outputs remain available.</p>${attempts.map(item => html`<details ${item.id === step.id ? "open" : ""}><summary>Attempt ${item.attempt || 1} / ${t(statusNames[item.status])}</summary>${item.feedback ? html`<p class="handoff-card">${escape(item.feedback)}</p>` : ""}${item.messages.map(message => html`<div class="message ${message.type}"><div class="message-label">${escape(t(message.type))}</div><div class="message-text">${escape(message.text)}</div></div>`).join("")}${item.finalText ? html`<details><summary>Structured result</summary><pre class="artifact-preview">${escape(item.finalText)}</pre></details>` : ""}<div class="artifact-list">${run.artifacts.filter(a => a.stepId === item.id).map(artifactRow).join("")}</div></details>`).join("")}</div>`;
+    return html`<div class="attempts-list"><p class="meta">Each revision uses a fresh session. Earlier conversations and outputs remain available.</p>${attempts.map(item => html`<details ${item.id === step.id ? "open" : ""}><summary>Attempt ${item.attempt || 1} / ${t(statusNames[item.status])} ${sessionClock(item, run, true)}</summary>${item.feedback ? html`<p class="handoff-card">${escape(item.feedback)}</p>` : ""}${item.messages.map(message => html`<div class="message ${message.type}"><div class="message-label">${escape(t(message.type))}</div><div class="message-text">${escape(message.text)}</div></div>`).join("")}${item.finalText ? html`<details><summary>Structured result</summary><pre class="artifact-preview">${escape(item.finalText)}</pre></details>` : ""}<div class="artifact-list">${run.artifacts.filter(a => a.stepId === item.id).map(artifactRow).join("")}</div></details>`).join("")}</div>`;
   }
 
   function terminalView(step, run) {
