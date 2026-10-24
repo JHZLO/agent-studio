@@ -1,4 +1,8 @@
 export function sessionTiming(step, run) {
+  if (run.followup && run.followup.stepId === step.id) {
+    const start = Date.parse(run.followup.startedAt);
+    return Number.isFinite(start) && ["running", "waiting_approval"].includes(run.status) ? { kind: "running", start } : { kind: "unavailable" };
+  }
   if (step.status === "queued" || (!step.messages.length && ["waiting_approval", "cancelled"].includes(step.status))) return { kind: "pending" };
   const start = Date.parse(step.messages[0]?.time);
   if (!Number.isFinite(start)) return { kind: "unavailable" };

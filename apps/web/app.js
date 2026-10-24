@@ -9,6 +9,7 @@ import { sessionTiming, formatDuration } from "./session-time.js";
 import { isMarkdown, renderMarkdown, renderDiagrams } from "./markdown.js";
 import "./markdown.css";
 import "./session-focus.css";
+import "./session-chat.css";
 (() => {
   "use strict";
 
@@ -30,7 +31,7 @@ import "./session-focus.css";
     view: "home", selected: null, artifactId: null, pendingOrder: null,
     expandedRunId: null, openArtifacts: [], artifactFormat: "preview", focusPane: "conversation", focusSplit: 44, focusScroll: 0,
     sourceDocuments: [], fileBrowser: null, fileBrowserActive: false, fileLoading: false, fileError: "", fileRequest: 0,
-    sessionTab: "conversation", reviewDraft: "", reviewId: null, step: 0, followRun: true, historyId: null,
+    sessionTab: "conversation", reviewDraft: "", reviewId: null, messageDrafts: {}, sendingMessages: new Set(), step: 0, followRun: true, historyId: null,
     linkFrom: null, zoom: null, connectProvider: "codex", connectAuth: "subscription",
     skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", editingAgentId: null, starting: false,
     navigationOpen: false, navigationActions: false, expandedProjects: new Set([state.activeProjectId].filter(Boolean)),
@@ -126,13 +127,13 @@ import "./session-focus.css";
     state.history = [...all.values()].sort((a, b) => b.createdAt?.localeCompare(a.createdAt || "") || 0);
     if (ui.view === "run" && !ui.starting && !ui.historyId && viewed && viewed.id !== state.run?.id) ui.historyId = viewed.id;
     if (currentRun()?.id === run.id) {
-      if (ui.followRun) ui.step = run.review ? run.steps.findIndex(step => step.id === run.review.stepId) : Math.min(run.index, run.steps.length - 1);
+      if (ui.followRun) ui.step = run.followup ? run.steps.findIndex(step => step.id === run.followup.stepId) : run.review ? run.steps.findIndex(step => step.id === run.review.stepId) : Math.min(run.index, run.steps.length - 1);
       if (!run.review && previous === "waiting_review" && run.status === "running" && ui.sessionTab === "review") ui.sessionTab = "conversation";
       if (run.review && run.review.id !== ui.reviewId) {
         ui.reviewId = run.review.id; ui.reviewDraft = ""; ui.sessionTab = "review";
         ui.step = run.steps.findIndex(step => step.id === run.review.stepId);
       }
-      if (run.status === "succeeded" && previous && previous !== "succeeded") celebrate();
+      if (run.status === "succeeded" && previous && previous !== "succeeded" && !viewed?.followup) celebrate();
     }
     if (["home", "runs"].includes(ui.view) || (ui.view === "run" && currentRun()?.id === run.id)) render(true);
     else {
@@ -277,7 +278,7 @@ import "./session-focus.css";
     const retainedTerminal = ui.view === "run" && ui.sessionTab === "terminal" ? retainTerminal() : null;
     const focused = document.activeElement;
     const focusAttributes = focused && app.contains(focused) ? ["id", "data-action", "data-view", "data-id", "data-tab", "data-index", "data-pane", "data-format", "data-path", "aria-label"].filter(name => focused.hasAttribute(name)).map(name => [name, focused.getAttribute(name)]) : [];
-    const preserved = live ? [document.getElementById("task-brief"), document.getElementById("flow-rule-form"), document.getElementById("review-feedback"), document.getElementById("focus-document")] : [];
+    const preserved = live ? [document.getElementById("task-brief"), document.getElementById("flow-rule-form"), document.getElementById("review-feedback"), document.getElementById("session-message"), document.getElementById("focus-document")] : [];
     const scrollPositions = live ? [...document.querySelectorAll(".session-content, .evidence-body, .run-steps, .canvas-viewport, .sidebar, .nav")].map(element => [element.className, element.scrollTop, element.scrollLeft]) : [];
     const viewNames = { home: "New task", team: "Flows", run: "Task details", agents: "Agent library", skills: "Skill library", connections: "AI connections", runs: "Tasks", imported: "Imported sessions", defaults: "Workspace defaults" };
     const entering = renderedView !== ui.view;
@@ -637,18 +638,18 @@ import "./session-focus.css";
     const step = run.steps[ui.step];
     const expanded = ui.expandedRunId === run.id;
     const isCurrent = engine.isActive(run) || run.id === state.run?.id;
-    const controls = isCurrent ? (run.status === "running" ? button("pause", run.pauseRequested ? "Pause requested" : "Pause", "pause", "", "", run.pauseRequested) : run.status === "paused" && run.controlMode === "studio" ? button("resume", "Resume", "play", "primary") : "") + (["queued", "running", "paused", "waiting_approval", "waiting_review", "needs_reconciliation", "cancelling"].includes(run.status) ? button("cancel", "Cancel", "stop", "danger") : button("run", "Run again", "play", "primary")) : button("live-session", "Latest run", "arrow");
-    const activeStep = run.steps[Math.min(run.index, run.steps.length - 1)];
+    const controls = run.followup ? run.status === "needs_reconciliation" ? button("cancel", "Cancel", "stop", "danger") : button("stop-message", run.followup.stopRequested ? "Stopping reply" : "Stop reply", "stop", "", "", run.followup.stopRequested || run.status === "needs_reconciliation") : isCurrent ? (run.status === "running" ? button("pause", run.pauseRequested ? "Pause requested" : "Pause", "pause", "", "", run.pauseRequested) : run.status === "paused" && run.controlMode === "studio" ? button("resume", "Resume", "play", "primary") : "") + (["queued", "running", "paused", "waiting_approval", "waiting_review", "needs_reconciliation", "cancelling"].includes(run.status) ? button("cancel", "Cancel", "stop", "danger") : button("run", "Run again", "play", "primary")) : button("live-session", "Latest run", "arrow");
+    const activeStep = run.steps.find(item => item.id === run.followup?.stepId) || run.steps[Math.min(run.index, run.steps.length - 1)];
     const completed = run.steps.filter(item => item.status === "succeeded").length;
-    const nextAction = run.status === "waiting_review" ? (run.review.kind === "loop_limit" ? "Automatic revision limit reached" : run.review.kind === "scope_change" ? "A plan change needs your review" : "Your review is needed") : run.status === "waiting_approval" ? t`${escape(activeStep.agent.name)} is waiting for you` : run.status === "running" ? t`${escape(activeStep.agent.name)} is working` : run.status === "succeeded" ? "Your team has finished. Review the outputs." : run.status === "paused" ? "Task paused. Resume when you are ready." : run.status === "failed" ? "This task needs attention" : run.status === "needs_reconciliation" ? "Review the interrupted session" : "Task cancelled. Your outputs are still here.";
-    const detail = run.status === "waiting_review" ? t("Review the outputs below. The next agent has not started.") : run.status === "waiting_approval" ? escape(run.approval?.description || t("Review the pending permission request.")) : run.status === "running" && !run.pauseRequested ? t`Step ${Math.min(run.index + 1, run.steps.length)} of ${run.steps.length} / ${t(roleOutputs[activeStep.agent.role])}` : run.status === "succeeded" ? t`${run.artifacts.length} outputs, with the conversations that produced them.` : escape(run.note);
-    const approvalActions = isCurrent && run.status === "waiting_review" ? button("review-open", "Review outputs", "file", "primary") + controls : isCurrent && run.status === "needs_reconciliation" ? button("reconcile", "Check provider state", "activity", "primary") + controls : isCurrent && run.status === "waiting_approval" ? button("approve", "Approve request", "check", "primary") + button("cancel", "Reject & cancel", "close", "text") : controls;
+    const nextAction = run.followup && run.status === "running" ? t`${escape(activeStep.agent.name)} is replying` : run.status === "waiting_review" ? (run.review.kind === "loop_limit" ? "Automatic revision limit reached" : run.review.kind === "scope_change" ? "A plan change needs your review" : "Your review is needed") : run.status === "waiting_approval" ? t`${escape(activeStep.agent.name)} is waiting for you` : run.status === "running" ? t`${escape(activeStep.agent.name)} is working` : run.status === "succeeded" ? "Your team has finished. Review the outputs." : run.status === "paused" ? "Task paused. Resume when you are ready." : run.status === "failed" ? "This task needs attention" : run.status === "needs_reconciliation" ? "Review the interrupted session" : "Task cancelled. Your outputs are still here.";
+    const detail = run.followup && run.status === "running" ? t("Only this agent is replying. The workflow will stay at its current step.") : run.status === "waiting_review" ? t("Review the outputs below. The next agent has not started.") : run.status === "waiting_approval" ? escape(run.approval?.description || t("Review the pending permission request.")) : run.status === "running" && !run.pauseRequested ? t`Step ${Math.min(run.index + 1, run.steps.length)} of ${run.steps.length} / ${t(roleOutputs[activeStep.agent.role])}` : run.status === "succeeded" && run.artifacts.some(item => item.stale && !item.superseded) ? escape(t(run.note)) : run.status === "succeeded" ? t`${run.artifacts.length} outputs, with the conversations that produced them.` : escape(run.note);
+    const approvalActions = isCurrent && run.status === "waiting_review" ? button("review-open", "Review outputs", "file", "primary") + controls : isCurrent && run.status === "needs_reconciliation" ? button("reconcile", "Check provider state", "activity", "primary") + controls : isCurrent && run.status === "waiting_approval" ? button("approve", "Approve request", "check", "primary") + (run.followup ? controls : button("cancel", "Reject & cancel", "close", "text")) : controls;
     const followControl = isCurrent && engine.isActive(run) ? (ui.followRun ? html`<span class="badge">Following live</span>` : button("follow-run", "Follow live", "activity", "small")) : html`<span class="badge gray">Session ${ui.step + 1}</span>`;
     const mood = item => item.status === "running" ? "running" : item.status === "waiting_approval" ? "waiting" : "";
     const actionMark = ["running", "waiting_approval", "paused"].includes(run.status) ? agentIcon(activeStep.agent, true, mood(activeStep)) : icon(run.status === "succeeded" ? "check" : run.status === "failed" ? "alert" : "activity");
     return html`<section class="next-action ${["waiting_approval", "waiting_review"].includes(run.status) ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${t(nextAction)}</h2><p>${detail}</p>${run.approval ? html`<pre class="approval-details">${escape(run.approval.details)}</pre>` : ""}</div><div class="actions">${approvalActions}</div></section>
       <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Flow v${run.flow.revision || 1}${run.lockedPlan ? t` / Approved plan v${run.lockedPlan.version}` : ""}${Object.entries(run.loopCounts || {}).map(([id, count]) => t` / ${escape(run.steps.find(s => s.agent.id === id)?.agent.name)} revisions ${count}/${run.flow.rules?.find(r => r.after === id)?.loop?.maxCycles}`).join("")}</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => html`<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
-      <section class="panel run-grid${expanded ? " expanded-workspace" : ""}"${expanded ? ` style="--session-split:${ui.focusSplit}%" data-pane="${ui.focusPane}"` : ""}>${expanded ? focusHeader(run) : ""}<aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, run)}${followControl}${expanded ? "" : button("session-fullscreen", "Full screen", "fit", "small")}</div></div><nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, run) : ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div>${expanded && run.review?.stepId === step.id && run.status === "waiting_review" && ["conversation", "review"].includes(ui.sessionTab) ? html`<div class="focus-review">${reviewControls(run, run.review)}</div>` : ""}<div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${expanded ? html`<div class="session-divider" role="separator" aria-label="Resize conversation and document panels" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65" aria-valuenow="${ui.focusSplit}" tabindex="0"></div>` : ""}${evidenceView(run)}</section>`;
+      <section class="panel run-grid${expanded ? " expanded-workspace" : ""}"${expanded ? ` style="--session-split:${ui.focusSplit}%" data-pane="${ui.focusPane}"` : ""}>${expanded ? focusHeader(run) : ""}<aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => html`<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${t(statusNames[item.status])}${item.attempt > 1 ? t` / Attempt ${item.attempt}` : ""}</small>${sessionClock(item, run, true)}</span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.actualModel || step.agent.model)} / ${authName(step.agent.auth)}</p></div></div><div class="session-head-actions">${sessionClock(step, run)}${followControl}${expanded ? "" : button("session-fullscreen", "Full screen", "fit", "small")}</div></div><nav class="session-tabs" aria-label="Session content">${[...(run.review || run.reviewHistory?.length ? [["review", "Review"]] : []), ["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"], ["attempts", "Attempts"], ["terminal", "Terminal"]].map(([id, label]) => html`<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${t(label)}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "review" ? reviewView(run) : ui.sessionTab === "attempts" ? attemptsView(step, run) : ui.sessionTab === "terminal" ? terminalView(step, run) : ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div>${expanded && run.review?.stepId === step.id && run.status === "waiting_review" && ["conversation", "review"].includes(ui.sessionTab) ? html`<div class="focus-review">${reviewControls(run, run.review)}</div>` : ui.sessionTab === "conversation" ? messageComposer(run, step) : ""}<div class="session-foot"><span class="usage-label">${escape(usageLabel(step))}</span>${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? t("artifact") : t("artifacts")}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${expanded ? html`<div class="session-divider" role="separator" aria-label="Resize conversation and document panels" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65" aria-valuenow="${ui.focusSplit}" tabindex="0"></div>` : ""}${evidenceView(run)}</section>`;
   }
 
   function sessionClock(step, run, compact = false) {
@@ -683,7 +684,7 @@ import "./session-focus.css";
     const canApprove = pending && !["scope_change", "loop_limit"].includes(review.kind);
     const target = run.steps.find(s => s.agent.id === review.returnTo);
     const planning = step?.agent.role === "planner" && review.lockOutputs;
-    return pending ? html`<form data-form="review-feedback" data-id="${review.id}" class="review-feedback"><label for="review-feedback">${planning ? t("Questions or changes for the plan") : t`What should ${escape(target?.agent.name || t("the agent"))} change?`}</label><textarea id="review-feedback" data-id="${review.id}" name="feedback" maxlength="8000" rows="3" placeholder="Describe the changes or the next approach to try..." required>${escape(ui.reviewDraft)}</textarea><p class="meta">A revision returns to ${escape(target?.agent.name)} and reruns later checks. Previous sessions remain in Attempts.</p><button type="submit" class="btn">${icon("reset")}Request revision</button></form><div class="review-actions">${canApprove ? button("review-lock", review.lockOutputs ? "Lock only" : "Approve only", "lock") + button("review-approve", review.lockOutputs ? "Lock and continue" : "Approve and continue", "check", "primary") : html`<p class="meta">Send a revision request to continue, or cancel this task. No further automatic retries will run without your action.</p>`}</div><p class="meta">${review.lockOutputs ? t("Approval locks these exact output versions. ") : ""}Human review does not grant tool permissions.</p>` : html`<p class="meta">${review.action === "approved" ? t`Approved ${new Date(review.resolvedAt).toLocaleString(locale())}.` : escape(review.feedback || "")}</p>`;
+    return pending ? html`<form data-form="review-feedback" data-id="${review.id}" class="review-feedback"><label for="review-feedback">${planning ? t("Questions or changes for the plan") : t`What should ${escape(target?.agent.name || t("the agent"))} change?`}</label><textarea id="review-feedback" data-id="${review.id}" name="feedback" maxlength="8000" rows="3" placeholder="Describe the changes or the next approach to try..." required>${escape(ui.reviewDraft)}</textarea><p class="meta">A revision returns to ${escape(target?.agent.name)} and reruns later checks. Previous sessions remain in Attempts.</p><div class="review-message-actions">${button("review-message", "Send question", "message", "", "", !run.steps.find(item => item.id === review.stepId)?.providerThreadId || !!run.followup)}<button type="submit" class="btn">${icon("reset")}Request revision</button></div></form><div class="review-actions">${canApprove ? button("review-lock", review.lockOutputs ? "Lock only" : "Approve only", "lock") + button("review-approve", review.lockOutputs ? "Lock and continue" : "Approve and continue", "check", "primary") : html`<p class="meta">Send a revision request to continue, or cancel this task. No further automatic retries will run without your action.</p>`}</div><p class="meta">${review.lockOutputs ? t("Approval locks these exact output versions. ") : ""}Human review does not grant tool permissions.</p>` : html`<p class="meta">${review.action === "approved" ? t`Approved ${new Date(review.resolvedAt).toLocaleString(locale())}.` : escape(review.feedback || "")}</p>`;
   }
 
   function reviewView(run) {
@@ -717,13 +718,58 @@ import "./session-focus.css";
     return html`<div class="terminal-panel"><p class="meta">${attached ? t("This native Codex terminal uses the same server and provider thread. Closing the view keeps the process alive.") : t("Pause the workflow at a step boundary, then open this session in the native Codex terminal.")}</p><div class="actions">${attached ? button("terminal-close", "Return control to Studio", "arrow") + button("terminal-command", "External terminal command", "terminal", "small") : button("terminal-open", "Open Codex terminal", "terminal", "primary", `data-id="${step.id}"`, !ready)}</div>${attached ? html`<div id="studio-terminal" class="terminal-screen" data-session="${run.terminal.id}" aria-label="Native Codex terminal"></div>` : ""}</div>`;
   }
 
+  function messageComposer(run, step) {
+    const key = `${run.id}:${step.id}`, sending = ui.sendingMessages.has(key);
+    const replying = run.followup?.stepId === step.id;
+    const allowed = step.providerThreadId && step.status !== "queued" && ["succeeded", "failed", "cancelled", "paused", "waiting_review"].includes(run.status) && run.controlMode === "studio" && !run.approval && !run.followup && !run.steps.some(item => item.activeTurnId);
+    const hint = !step.providerThreadId || step.status === "queued" ? "This agent can receive messages after its session starts." : run.status === "needs_reconciliation" ? "Check provider state before continuing this conversation." : !allowed && !replying ? "Wait for the current turn to finish or pause the workflow to send a message." : "Uses this agent's saved permissions. Other agents will not run automatically.";
+    return html`<form class="session-composer" data-form="session-message" data-id="${key}"><label for="session-message">Message ${escape(step.agent.name)}</label><textarea id="session-message" data-id="${key}" name="message" rows="2" maxlength="8000" placeholder="Ask a question or describe the next change..." aria-describedby="session-message-hint" required>${escape(ui.messageDrafts[key] || "")}</textarea><p id="session-message-hint" class="meta">${t(hint)}</p><div class="composer-actions"><span class="meta">Ctrl / ⌘ + Enter to send</span>${replying ? button("stop-message", run.followup.stopRequested ? "Stopping reply" : "Stop reply", "stop", "small", "", run.followup.stopRequested || run.status === "needs_reconciliation") : html`<button type="submit" class="btn primary small" ${!allowed || sending ? "disabled" : ""}>${icon(sending ? "loader" : "arrow")}${t(sending ? "Sending message" : "Send message")}</button>`}</div></form>`;
+  }
+
+  async function sendConversation(run, step, value, fromReview = false) {
+    const text = String(value || "").trim(), key = `${run.id}:${step?.id}`;
+    if (!text || !step || ui.sendingMessages.has(key)) return;
+    ui.sendingMessages.add(key); ui.followRun = false;
+    render(true);
+    try {
+      await engine.message(step.id, text, run);
+      if (fromReview && (ui.reviewDraft || "").trim() === text && ui.reviewId === run.review?.id) {
+        ui.reviewDraft = "";
+        const input = document.getElementById("review-feedback");
+        if (input?.dataset.id === run.review.id) input.value = "";
+      }
+      else if ((ui.messageDrafts[key] || "").trim() === text) {
+        delete ui.messageDrafts[key];
+        const input = document.getElementById("session-message");
+        if (input?.dataset.id === key) input.value = "";
+      }
+      if (fromReview && currentRun()?.id === run.id) { ui.step = run.steps.findIndex(item => item.id === step.id); ui.sessionTab = "conversation"; }
+    } catch (error) { toast(error.message); }
+    finally { ui.sendingMessages.delete(key); render(true); }
+    if (currentRun()?.id === run.id && currentRun().steps[ui.step]?.id === step.id) {
+      const conversation = app.querySelector(".session-content");
+      if (conversation) conversation.scrollTop = conversation.scrollHeight;
+      document.getElementById("session-message")?.focus({ preventScroll: true });
+    }
+  }
+
+  function messageBody(message) {
+    if (message.type === "assistant") {
+      try {
+        const result = JSON.parse(message.text.trim().replace(/^```(?:json)?\n|\n```$/g, ""));
+        if (typeof result.summary === "string" && ["completed", "blocked"].includes(result.status) && Array.isArray(result.artifacts)) return `<div class="markdown-body">${renderMarkdown(result.summary)}</div>`;
+      } catch {}
+    }
+    return escape(message.type === "system" ? t(message.text) : message.text);
+  }
+
   function messagesView(step) {
     const messages = step.messages.filter(message => ui.sessionTab === "conversation" ? message.type !== "tool" : message.type === "tool");
     if (!messages.length) return html`<div class="empty" style="padding:45px 15px"><h2 style="font-size:15px">${step.status === "queued" ? t("This session has not started yet") : t("Waiting for the next event")}</h2><p>${ui.sessionTab === "tools" ? t("Recorded tool calls will appear here when this step uses a tool.") : t("The agent will receive a fresh session and references to the previous outputs.")}</p></div>`;
     const seen = seenMessages.stepId === step.id ? seenMessages.count : step.messages.length;
     seenMessages = { stepId: step.id, count: step.messages.length };
     const typing = ui.sessionTab === "conversation" && step.status === "running" ? html`<div class="message typing" aria-hidden="true"><span></span><span></span><span></span></div>` : "";
-    return messages.map(message => html`<div class="message ${message.type}${step.messages.indexOf(message) >= seen ? " fresh" : ""}"><div class="message-label"><span>${message.type === "assistant" ? escape(step.agent.name) : message.type === "tool" ? t("Tool call") : t("Session event")}</span><span>${new Date(message.time).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span></div><div class="message-text">${escape(message.text)}</div></div>`).join("") + typing;
+    return messages.map(message => html`<div class="message ${message.type}${step.messages.indexOf(message) >= seen ? " fresh" : ""}"><div class="message-label"><span>${message.type === "assistant" ? escape(step.agent.name) : message.type === "user" ? t("You") : message.type === "tool" ? t("Tool call") : t("Session event")}</span><span>${new Date(message.time).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span></div><div class="message-text">${messageBody(message)}</div></div>`).join("") + typing;
   }
 
   function handoffView(step, run) {
@@ -1227,7 +1273,9 @@ import "./session-focus.css";
       if (ui.artifactId === id) ui.artifactId = ui.openArtifacts[Math.min(index, ui.openArtifacts.length - 1)] || null;
       render(true); app.querySelector(".focus-file-tab[aria-selected=true], .focus-output-list")?.focus({ preventScroll: true });
     }
-    else if (action === "follow-run") { ui.followRun = true; ui.step = Math.min(currentRun().index, currentRun().steps.length - 1); render(); }
+    else if (action === "stop-message") await engine.control("stop-message", currentRun());
+    else if (action === "review-message") await sendConversation(currentRun(), currentRun().steps.find(step => step.id === currentRun().review?.stepId), ui.reviewDraft, true);
+    else if (action === "follow-run") { ui.followRun = true; ui.step = currentRun().followup ? currentRun().steps.findIndex(step => step.id === currentRun().followup.stepId) : Math.min(currentRun().index, currentRun().steps.length - 1); render(); }
     else if (action === "help") { if (ui.navigationOpen) closeNavigation(); helpModal(); }
     else if (action === "close-modal") closeModal();
     else if (action === "run") startRun();
@@ -1476,6 +1524,7 @@ import "./session-focus.css";
 
   document.addEventListener("input", event => {
     if (event.target.id === "review-feedback") ui.reviewDraft = event.target.value;
+    if (event.target.id === "session-message") ui.messageDrafts[event.target.dataset.id] = event.target.value;
   });
   document.addEventListener("change", event => {
     const form = event.target.closest('[data-form="flow-rule"]');
@@ -1493,6 +1542,7 @@ import "./session-focus.css";
     event.preventDefault();
     const values = new FormData(form);
     if (form.dataset.form === "flow-rule") await saveFlowRule(form);
+    else if (form.dataset.form === "session-message") await sendConversation(currentRun(), currentRun().steps[ui.step], values.get("message"));
     else if (form.dataset.form === "review-feedback") await engine.review("request-revision", values.get("feedback"), currentRun());
     else if (form.dataset.form === "flow") saveFlow(form);
     else if (form.dataset.form === "project") await saveProject(form);
@@ -1557,6 +1607,12 @@ import "./session-focus.css";
   });
   document.addEventListener("keydown", event => {
     if (modal.open || event.defaultPrevented) return;
+    if (event.target.id === "session-message" && event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+      event.preventDefault();
+      const submit = event.target.form.querySelector('[type="submit"]');
+      if (submit && !submit.disabled) event.target.form.requestSubmit(submit);
+      return;
+    }
     if (ui.expandedRunId && event.key === "Escape" && !document.querySelector(":popover-open") && !event.target.closest("#studio-terminal")) {
       event.preventDefault(); toggleSessionFullscreen(); return;
     }

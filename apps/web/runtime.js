@@ -119,6 +119,9 @@ export class StudioEngine {
     await flush();
     const run = await request("/api/runs/start", { brief, projectId: project.id, flowId: flow.id }); this.update(run, true); return run;
   }
+  async message(stepId, message, target = this.run) {
+    this.update(await request("/api/runs/message", { id: target.id, stepId, message }));
+  }
   async control(action, target = this.run) {
     try { const run = await request("/api/runs/control", { id: target.id, action, approvalId: target.approval?.id }); this.update(run); }
     catch (error) { window.dispatchEvent(new CustomEvent("studio-error", { detail: error.message })); }

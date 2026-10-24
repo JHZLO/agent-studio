@@ -46,3 +46,11 @@ test("Session durations show seconds, hours and nonnegative clock differences", 
   assert.equal(formatDuration(360001000), "100:00:01");
   assert.equal(formatDuration(-5000), "00:00");
 });
+
+test("Follow-up clocks measure the active reply without changing the original step duration", () => {
+  const completed = { ...step, id: "coder", status: "succeeded", completedAt: end };
+  const followup = { stepId: "coder", startedAt: "2026-10-24T04:00:00.000Z" };
+  assert.deepEqual(sessionTiming({ ...completed, status: "running" }, { status: "running", followup }), { kind: "running", start: Date.parse(followup.startedAt) });
+  assert.deepEqual(sessionTiming(completed, { status: "needs_reconciliation", followup }), { kind: "unavailable" });
+  assert.deepEqual(sessionTiming(completed, { status: "succeeded" }), { kind: "completed", start: Date.parse(start), end: Date.parse(end) });
+});
