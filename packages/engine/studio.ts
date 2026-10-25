@@ -927,7 +927,18 @@ export class Studio {
     const parsed = resultSchema.parse(JSON.parse(step.finalText!.trim().replace(/^```(?:json)?\n|\n```$/g, "")));
     const rule = run.flow.rules?.find(item => item.after === step.agent.id);
     const changesLockedPlan = run.lockedPlan && parsed.artifacts.some(output => run.artifacts.some(a => run.lockedPlan!.artifactIds.includes(a.id) && a.name === output.name && a.content !== output.content));
-    if (parsed.decision === "scope_change" || changesLockedPlan) this.requestReview(run, step, "scope_change", parsed.summary);
+    if (parsed.decision === "scope_change" || changesLockedPlan) {
+      const planner = run.steps.find(candidate => candidate.id === run.lockedPlan?.stepId && candidate.agent.role === "planner" && relatedSteps(run.flow, step.agent.id, "upstream").has(candidate.agent.id));
+      if (planner && (rule?.review ?? "auto") === "auto" && !step.reviewRequired) {
+        const downstream = relatedSteps(run.flow, planner.agent.id, "downstream");
+        const sources = run.steps.filter(candidate => candidate.id === step.id || (run.flow?.edges && downstream.has(candidate.agent.id) && candidate.status === "succeeded" && ["scope_change", "revise"].includes(candidate.decision ?? "")));
+        const sourceIds = new Set(sources.map(source => source.id));
+        const artifactIds = run.artifacts.filter(artifact => !artifact.superseded && (sourceIds.has(artifact.stepId) || run.lockedPlan!.artifactIds.includes(artifact.id))).map(artifact => artifact.id);
+        const feedback = `Revise the approved plan and QA sheet to address these findings. Preserve agreed requirements and identify any decisions the user must make before coding.\n${sources.map(source => resultSchema.parse(JSON.parse(source.finalText!)).summary).join("\n")}`;
+        this.rewind(run, planner.agent.id, feedback, artifactIds, step, true);
+        run.steps[run.index].reviewRequired = true;
+      } else this.requestReview(run, step, "scope_change", parsed.summary);
+    }
     else if (parsed.decision === "revise" && rule?.loop) {
       const group = revisionGroups(run.flow).find(item => item.members.includes(step.agent.id))!;
       const cycles = (run.loopCounts ??= {})[group.key] ?? 0;

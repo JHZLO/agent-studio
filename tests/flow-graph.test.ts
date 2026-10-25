@@ -214,6 +214,22 @@ test("A parallel scope change takes precedence over an automatic implementation 
   assert.equal(waiting.loopCounts?.reviewer, undefined);
 });
 
+test("Automatic parallel scope changes collect peer findings and return to the locked Planner", async t => {
+  const f = await fixture(t, { edges: [{ from: "planner", to: "coder" }, { from: "coder", to: "reviewer" }, { from: "coder", to: "documenter" }], rules: [{ after: "planner", review: "always", lockOutputs: true }, { after: "reviewer", loop: { target: "coder", maxCycles: 2, onLimit: "review" } }] });
+  f.result(async (_run, step) => output(step, step.agent.id === "documenter" ? "scope_change" : step.agent.id === "reviewer" ? "revise" : "pass"));
+  const run = await f.start(); await f.review(await f.wait(run.id, "waiting_review"));
+  const planning = await f.wait(run.id, "waiting_review");
+  assert.equal(planning.review!.stepId, planning.steps[0].id); assert.equal(planning.review!.kind, "checkpoint");
+  assert.equal(planning.review!.lockOutputs, true); assert.equal(planning.lockedPlan, undefined);
+  assert.equal(planning.steps[0].attempt, 2); assert.ok(planning.steps.slice(1).every(step => step.status === "queued"));
+  assert.equal(planning.pendingReviews?.length ?? 0, 0); assert.equal(planning.loopCounts?.reviewer, undefined);
+  const planner = f.calls.filter(call => call.id === "planner").at(-1)!;
+  assert.match(planner.prompt, /Reviewer checked/); assert.match(planner.prompt, /Documenter checked/);
+  assert.ok(planner.step.receivedArtifacts.some(artifact => artifact.name === "reviewer.md"));
+  assert.ok(planner.step.receivedArtifacts.some(artifact => artifact.name === "documenter.md"));
+  assert.equal(f.calls.filter(call => call.id === "coder").length, 1);
+});
+
 test("Delegated changes stay in their graph branch and require combined verification before joining", async t => {
   const f = await fixture(t), settings = f.studio.settings(), coder = settings.agents[1];
   coder.tools = ["read", "write", "shell"]; coder.permissionLevel = "bypass"; coder.delegation = { enabled: true, maxChildren: 1, allowedAgentIds: ["worker"] };

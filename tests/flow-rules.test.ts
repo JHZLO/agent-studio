@@ -234,7 +234,7 @@ test("Execution errors and missing decisions never trigger an automatic revision
 });
 
 test("Scope changes return to planning and invalidate downstream evidence", async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, [...rules, { after: "coder", review: "on_issue" }]);
   f.result(step => output(step, step.agent.role === "coder" ? "scope_change" : "pass"));
   const started = await f.start(); await f.review(await f.wait(started.id, "waiting_review"));
   const change = await f.wait(started.id, "waiting_review");
@@ -247,6 +247,41 @@ test("Scope changes return to planning and invalidate downstream evidence", asyn
   assert.equal(planning.steps[1].status, "queued"); assert.equal(planning.review?.version, 2);
   await f.review(planning); const done = await f.wait(started.id, "succeeded");
   assert.equal(done.lockedPlan?.version, 2);
+});
+
+test("Automatic steps send locked-plan changes to Planner without a Coder checkpoint", async t => {
+  const f = await fixture(t);
+  f.result(step => output(step, step.agent.role === "coder" && !step.attempt ? "scope_change" : "pass"));
+  const started = await f.start(), original = await f.wait(started.id, "waiting_review");
+  await f.review(original);
+  const planning = await f.wait(started.id, "waiting_review");
+  assert.deepEqual(f.calls.map(call => call.step.agent.role), ["planner", "coder", "planner"]);
+  assert.equal(planning.review!.stepId, planning.steps[0].id);
+  assert.equal(planning.review!.kind, "checkpoint"); assert.equal(planning.review!.lockOutputs, true);
+  assert.equal(planning.review!.version, 2); assert.equal(planning.lockedPlan, undefined);
+  assert.equal(planning.steps[1].status, "queued"); assert.equal(planning.steps[1].attempt, 2);
+  assert.equal(planning.revisionHistory!.at(-1)!.automatic, true);
+  assert.equal(planning.revisionHistory!.at(-1)!.targetAgentId, "planner");
+  const planner = f.calls.at(-1)!;
+  assert.match(planner.prompt, /Coder: scope_change/);
+  assert.ok(original.review!.artifactIds.every(id => planner.step.receivedArtifacts.some(artifact => artifact.id === id)));
+  assert.ok(planner.step.receivedArtifacts.some(artifact => artifact.name === "coder.md"));
+  assert.equal(planning.reviewHistory!.length, 1);
+  await assert.rejects(f.review(original), /changed or was already resolved/);
+  await f.review(planning); const done = await f.wait(started.id, "succeeded");
+  assert.equal(done.lockedPlan?.version, 2);
+  assert.equal(f.calls.filter(call => call.step.agent.role === "coder").length, 2);
+});
+
+test("Explicit Coder checkpoints still hold plan changes before returning to Planner", async t => {
+  const f = await fixture(t, [...rules, { after: "coder", review: "always" }]);
+  f.result(step => output(step, step.agent.role === "coder" ? "scope_change" : "pass"));
+  const started = await f.start(); await f.review(await f.wait(started.id, "waiting_review"));
+  const change = await f.wait(started.id, "waiting_review");
+  assert.equal(change.review!.kind, "scope_change"); assert.equal(change.review!.stepId, change.steps[1].id);
+  assert.deepEqual(f.calls.map(call => call.step.agent.role), ["planner", "coder"]);
+  assert.equal(change.lockedPlan?.version, 1);
+  await assert.rejects(f.review(change), /cannot advance/);
 });
 
 test("Approving an outdated project fingerprint requires a fresh revision", async t => {
