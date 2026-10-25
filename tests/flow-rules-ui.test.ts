@@ -27,16 +27,17 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   studio.catalog.scan = async () => ({ skills: [], sources: [], errors: [] }) as any;
   const calls: Step[] = [];
   let reviewerPasses = false;
-  t.mock.method(studio as any, "codexTurn", async (_run: Run, step: Step) => {
+  t.mock.method(studio as any, "codexTurn", async (run: Run, step: Step) => {
+    step.providerThreadId ??= `provider-${step.id}`;
     calls.push(structuredClone(step));
     const decision = step.agent.role === "reviewer" && !reviewerPasses ? "revise" : "pass";
     const names = step.agent.role === "planner" ? ["implementation-plan.md", "qa-sheet.md"] : [`${step.agent.role}.md`];
-    const result = JSON.stringify({ status: "completed", decision, summary: decision === "pass" ? "Ready for review" : "Fix the duplicate request case", artifacts: names.map(name => ({ name, type: "Report", content: `${name}: draft ${step.attempt || 1}` })) });
+    const result = JSON.stringify({ status: "completed", decision, summary: run.followup ? "Updated Redis plan ready for review" : decision === "pass" ? "Ready for review" : "Fix the duplicate request case", artifacts: names.map(name => ({ name, type: "Report", content: run.followup ? `${name}: Redis revision` : `${name}: draft ${step.attempt || 1}` })) });
     step.messages.push({ id: step.id, type: "assistant", text: result, time: new Date().toISOString() });
     return result;
   });
   const streams = new Set<ServerResponse>();
-  const methods: Record<string, string> = { settings: "settings.save", catalog: "catalog", snapshots: "snapshots", project: "project", "runs/start": "run.start", "runs/control": "run.control", "runs/read": "run.read" };
+  const methods: Record<string, string> = { settings: "settings.save", catalog: "catalog", snapshots: "snapshots", project: "project", "runs/start": "run.start", "runs/control": "run.control", "runs/read": "run.read", "runs/message": "run.message" };
   const server = createServer(async (req, res) => {
     try {
       const path = new URL(req.url!, "http://localhost").pathname;
@@ -115,10 +116,20 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   await page.locator(".recent-work").getByRole("button", { name: /Implement a duplicate-safe request/ }).click();
   await page.getByRole("button", { name: "Review outputs", exact: true }).click();
   await expect(page.locator(".review-heading")).toContainText("Draft 2");
+  await page.getByLabel("Questions or changes for the plan", { exact: true }).fill("Revise the plan and QA sheet to use Redis.");
+  await page.getByRole("button", { name: "Send question", exact: true }).click();
+  await expect.poll(() => store.state().run!.followup).toBeUndefined();
+  await page.getByRole("button", { name: "Review outputs", exact: true }).click();
+  await expect(page.locator(".review-heading")).toContainText("Draft 3");
+  await expect(page.locator(".review-summary")).toContainText("Updated Redis plan");
+  await expect(page.locator(".review-document-body").first()).toContainText("Redis revision");
+  assert.ok(calls.every(step => step.agent.role === "planner"));
+  const revisedIds = store.state().run!.review!.artifactIds;
   await page.getByRole("button", { name: "Lock only", exact: true }).click();
   await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
-  assert.equal(calls.length, 2);
-  assert.equal(store.state().run!.lockedPlan!.version, 1);
+  assert.equal(calls.length, 3);
+  assert.equal(store.state().run!.lockedPlan!.version, 3);
+  assert.deepEqual(store.state().run!.lockedPlan!.artifactIds, revisedIds);
   await page.getByRole("button", { name: "Resume", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Choose the next revision", exact: true })).toBeVisible();
   assert.equal(calls.filter(step => step.agent.role === "coder").length, 2);

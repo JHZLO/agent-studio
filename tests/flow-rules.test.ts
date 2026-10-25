@@ -39,6 +39,7 @@ async function fixture(t: test.TestContext, customRules: unknown[] = rules, with
     studio.connections.assertAgent = async () => {};
     studio.catalog.scan = async () => ({ skills: [], sources: [], errors: [] }) as any;
     t.mock.method(studio as any, "codexTurn", async (_run: Run, step: Step, prompt: string, tools: Toolbox) => {
+      step.providerThreadId ??= `provider-${step.id}`;
       calls.push({ step: structuredClone(step), prompt });
       if (step.agent.role === "backend") await tools.call("studio_http", { url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, method: "GET", body: "", headers: {} });
       return result(step);
@@ -61,6 +62,14 @@ async function fixture(t: test.TestContext, customRules: unknown[] = rules, with
     },
     async review(run: Run, action = "approve-review", feedback = "") {
       return await studio.dispatch("run.control", { id: run.id, action, reviewId: run.review!.id, fingerprint: run.review!.fingerprint, feedback }) as Run;
+    },
+    async message(run: Run, message: string) {
+      await studio.dispatch("run.message", { id: run.id, stepId: run.steps[0].id, message });
+      for (let i = 0; i < 600; i++) {
+        if (!(studio as any).driving.has(run.id)) return store.run(run.id)!;
+        await delay(10);
+      }
+      assert.fail("Planner follow-up did not finish");
     },
   };
 }
@@ -117,6 +126,70 @@ test("Revision requests retain draft evidence and reject stale or duplicate appr
   assert.equal(resolutions.filter(r => r.status === "fulfilled").length, 1);
   await f.wait(started.id, "succeeded");
   assert.equal(f.calls.filter(c => c.step.agent.id === "coder").length, 1);
+});
+
+test("Planner chat revisions replace the pending lock and hand off only the latest plan", async t => {
+  const f = await fixture(t), started = await f.start(), first = await f.wait(started.id, "waiting_review");
+  const originalIds = first.review!.artifactIds;
+  const revision = (label: string) => JSON.stringify({ summary: label, status: "completed", decision: "pass", artifacts: ["implementation-plan.md", "qa-sheet.md"].map(name => ({ name, type: "Report", content: `${name}: ${label}` })) });
+  f.result(() => revision("Redis draft"));
+  const second = await f.message(first, "Replace synchronous database locking with Redis and update the QA sheet.");
+  assert.equal(second.status, "waiting_review"); assert.equal(second.lockedPlan, undefined);
+  assert.equal(second.steps[1].status, "queued"); assert.equal(second.index, first.index);
+  assert.notEqual(second.review!.id, first.review!.id); assert.notEqual(second.review!.fingerprint, first.review!.fingerprint);
+  assert.equal(second.review!.version, 2); assert.equal(second.review!.summary, "Redis draft");
+  assert.equal(second.note, "Redis draft"); assert.equal(second.steps[0].finalText, revision("Redis draft"));
+  assert.ok(originalIds.every(id => second.artifacts.find(a => a.id === id)?.superseded));
+  assert.ok(second.review!.artifactIds.every(id => !originalIds.includes(id)));
+  await assert.rejects(f.review(first), /changed or was already resolved/);
+
+  f.result(() => JSON.stringify({ summary: "Choose the infrastructure before approval.", status: "completed", decision: "pass", artifacts: [] }));
+  const explained = await f.message(second, "Explain the remaining decisions.");
+  assert.deepEqual(explained.review, second.review); assert.equal(explained.steps[0].finalText, second.steps[0].finalText);
+  f.result(() => revision("Final Redis draft"));
+  const third = await f.message(explained, "Include the agreed API contract in both documents.");
+  assert.equal(third.review!.version, 3); assert.equal(third.review!.summary, "Final Redis draft");
+  await assert.rejects(f.review(second), /changed or was already resolved/);
+  assert.ok(f.calls.every(call => call.step.agent.role === "planner"));
+
+  await f.restart();
+  const restored = f.store.run(started.id)!;
+  assert.deepEqual(restored.review, third.review);
+  await f.review(restored, "approve-review-only");
+  assert.deepEqual(f.store.run(started.id)!.lockedPlan, { version: 3, stepId: third.steps[0].id, artifactIds: third.review!.artifactIds });
+  f.result(step => output(step));
+  await f.studio.dispatch("run.control", { id: started.id, action: "resume" });
+  const done = await f.wait(started.id, "succeeded"), coder = f.calls.find(call => call.step.agent.role === "coder")!;
+  assert.deepEqual(coder.step.receivedArtifacts.map(a => a.id), third.review!.artifactIds);
+  assert.match(coder.prompt, /Approved plan version: 3/); assert.match(coder.prompt, /Final Redis draft/);
+  assert.doesNotMatch(coder.prompt, /implementation-plan\.md attempt 1/);
+  assert.equal(done.lockedPlan?.version, 3);
+});
+
+test("Incomplete or blocked Planner revisions cannot replace a complete review", async t => {
+  for (const [status, names] of [["completed", ["implementation-plan.md"]], ["blocked", ["implementation-plan.md", "qa-sheet.md"]]] as const) {
+    const f = await fixture(t), started = await f.start(), waiting = await f.wait(started.id, "waiting_review");
+    f.result(() => JSON.stringify({ summary: "Unfinished revision", status, decision: "pass", artifacts: names.map(name => ({ name, type: "Report", content: "Incomplete" })) }));
+    const done = await f.message(waiting, "Revise the plan and QA sheet.");
+    assert.deepEqual(done.review, waiting.review); assert.deepEqual(done.artifacts, waiting.artifacts);
+    assert.equal(done.status, "waiting_review"); assert.equal(done.lockedPlan, undefined);
+    assert.match(done.steps[0].messages.at(-1)!.text, /completed implementation plan and QA sheet/);
+    assert.ok(f.calls.every(call => call.step.agent.role === "planner"));
+  }
+});
+
+test("Planner follow-ups refresh a queued review without replacing the current review", async t => {
+  const f = await fixture(t), started = await f.start(), waiting = await f.wait(started.id, "waiting_review");
+  const run = (f.studio as any).getRun(started.id) as Run;
+  run.pendingReviews = [run.review!];
+  run.review = { ...run.review!, id: "other-review", stepId: run.steps[2].id, lockOutputs: false, summary: "Another handoff" };
+  const current = structuredClone(run.review);
+  f.result(() => JSON.stringify({ summary: "Updated queued plan", status: "completed", decision: "pass", artifacts: ["implementation-plan.md", "qa-sheet.md"].map(name => ({ name, type: "Report", content: "Updated" })) }));
+  const done = await f.message(waiting, "Revise the pending plan.");
+  assert.deepEqual(done.review, current); assert.equal(done.note, current.summary);
+  assert.notEqual(done.pendingReviews![0].id, waiting.review!.id);
+  assert.equal(done.pendingReviews![0].summary, "Updated queued plan");
+  assert.equal(done.pendingReviews![0].version, 2); assert.equal(done.lockedPlan, undefined);
 });
 
 test("Loops rerun the full interval in fresh sessions and stop at their saved bound", async t => {
