@@ -173,6 +173,10 @@ test("Flow controls save isolated rules and drive plan review, revisions and fin
   await page.getByRole("button", { name: decision.options[1], exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Answer for D1", exact: true })).toHaveValue(decision.options[1]);
   await expect(page.getByRole("button", { name: "Lock and continue", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Full screen", exact: true }).click();
+  await expect(page.locator('.session-tabs [data-tab="review"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".focus-review")).toHaveCount(0);
+  await expect(page.locator(".review-decisions")).toBeVisible();
   const pending = store.state().run!;
   store.saveRun(await studio.dispatch("run.read", { id: pending.id }), "ui.refresh");
   await expect(page.getByRole("textbox", { name: "Answer for D1", exact: true })).toHaveValue(decision.options[1]);

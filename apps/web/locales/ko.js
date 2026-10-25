@@ -1,4 +1,5 @@
 export default {
+  "Awaiting review": "검토 대기",
   "Optional": "선택 사항",
   "Discuss or request another revision": "추가 질문 또는 다른 수정 요청",
   "Your decisions": "사용자 결정 필요",
