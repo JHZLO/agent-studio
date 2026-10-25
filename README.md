@@ -127,6 +127,7 @@ flowchart LR
     P[Planner] --> H[Human plan lock]
     H --> C[Coder]
     C --> R[Reviewer]
+    C -->|Plan needs changes| P
     R -->|Pass| T[Tester]
     R -->|Needs changes| C
     T -->|Needs changes| C
@@ -137,7 +138,9 @@ The flow canvas draws return arrows. The task shows the shared count, the latest
 
 At a human review limit, enter feedback and choose **Run one more revision** or **Revisit plan**. Revisiting the plan clears the old lock and holds Coder until the new plan is approved. Neither action resets the automatic revision counter. Cancellation remains available from the task controls.
 
-Changes to an approved plan require another human review. Approval checks the reviewed output versions and project fingerprint; changed files require a fresh revision. Pending human reviews survive a runner restart. Superseded outputs remain in history and are not passed forward as current evidence.
+If an automatic step reports a change to a locked plan, Studio sends its findings and the approved outputs back to the Planner automatically. Coder does not request a separate human review. Planner revises the plan and QA sheet, then waits for a new plan approval before coding can resume. Explicit reviews on the reporting step still apply. If no upstream locked Planner is available, Studio holds the scope change for a person to resolve.
+
+Changes to an approved plan require another human review at the Planner checkpoint. Approval checks the reviewed output versions and project fingerprint; changed files require a fresh revision. Pending human reviews survive a runner restart. Superseded outputs remain in history and are not passed forward as current evidence.
 
 ## What works
 
