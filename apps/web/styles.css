@@ -146,7 +146,7 @@ code { font-family: var(--font-mono); }
 .btn svg { width: 16px; height: 16px; }
 .back-button svg { transform: rotate(180deg); }
 .panel { min-width: 0; background: var(--paper); border: 1.5px solid var(--ink); border-radius: 22px; overflow: hidden; }
-.panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1.5px dashed var(--line-2); }
+.panel-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding: 16px 20px; border-bottom: 1.5px dashed var(--line-2); }
 .panel-heading h2 { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
 .meta { font-size: 12px; color: var(--muted); line-height: 1.6; }
 .badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--mint); color: var(--mint-ink); border: 1.2px solid currentColor; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -190,6 +190,7 @@ code { font-family: var(--font-mono); }
 .composer-context { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 1.5px dashed var(--line-2); }
 .composer-location { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .composer-project.btn { border-color: var(--ink); background: var(--sky); font-size: 13px; font-weight: 650; padding: 6px 13px; min-height: 34px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.composer-project > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .computer-label { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
 .computer-label svg { width: 16px; height: 16px; }
 .execution-button.btn { background: var(--cream-2); border-color: transparent; color: var(--ink-2); font-size: 12.5px; padding: 6px 12px; min-height: 34px; }
@@ -365,8 +366,8 @@ input:disabled { color: var(--muted); background: var(--cream); }
 
 .builder-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; align-items: start; }
 .builder-grid.with-inspector { grid-template-columns: minmax(0, 1fr) 320px; }
-.flow-meta { display: flex; align-items: center; gap: 10px; }
-.flow-meta h2 { font-family: var(--font-display); font-size: 18px; }
+.flow-meta { display: flex; align-items: center; flex: 1 1 180px; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.flow-meta h2 { flex: none; font-family: var(--font-display); font-size: 18px; }
 .divider { width: 1.5px; height: 14px; background: var(--line-2); }
 .canvas-panel { box-shadow: 6px 6px 0 var(--lavender); }
 .canvas-viewport { position: relative; overflow: auto; height: 540px; background-color: #f8f1e3; background-image: linear-gradient(#e3d6bf 1px, transparent 1px), linear-gradient(90deg, #e3d6bf 1px, transparent 1px), linear-gradient(#efe5d3 1px, transparent 1px), linear-gradient(90deg, #efe5d3 1px, transparent 1px); background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px; }
@@ -480,7 +481,7 @@ input[type="checkbox"]:not(.worktree-option input):disabled { opacity: .45; curs
 .session-duration.compact { padding: 0; border: 0; margin-top: 5px; font-size: 10px; }
 .session-duration.muted { color: var(--muted); }
 .attempts-list summary .session-duration { margin: 0 0 0 8px; vertical-align: middle; }
-.session-tabs { display: flex; gap: 6px; padding: 12px 18px; border-bottom: 1.5px dashed var(--line-2); }
+.session-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 18px; border-bottom: 1.5px dashed var(--line-2); }
 .tab { border: 1.5px solid transparent; background: transparent; padding: 6px 13px; border-radius: 999px; color: var(--ink-2); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .tab:hover { background: var(--cream-2); }
 .tab.active { color: var(--ink); background: var(--agent-bg, var(--lavender)); border-color: var(--ink); }
@@ -555,7 +556,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; border-radi
 .agent-card .agent-icon.large { --size: 56px; }
 .agent-card > p { font-size: 13px; line-height: 1.75; color: var(--ink-2); min-height: 65px; }
 .agent-card .skill-list { margin: 18px 0; min-height: 28px; }
-.card-footer { display: flex; justify-content: space-between; align-items: center; gap: 7px; border-top: 1.5px dashed var(--line-2); padding-top: 16px; }
+.card-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 7px; border-top: 1.5px dashed var(--line-2); padding-top: 16px; }
 .connection-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .connection-card { box-shadow: 6px 6px 0 var(--peach); }
 .connection-card:nth-child(2n) { box-shadow: 6px 6px 0 var(--sky); }

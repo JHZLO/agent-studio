@@ -70,7 +70,7 @@ test("Delegation settings and child commands keep the selected target in both la
   await page.getByRole("button", { name: "전체화면", exact: true }).click(); await page.locator('.artifact-row[data-id="report-0"]').click(); await expect(page.locator("#focus-document h1")).toHaveText("Reader 결과");
   await page.locator('[data-action="project-files"]').first().click(); await page.locator('[data-action="project-file"][data-path="source.ts"]').click();
   await expect(page.locator("#focus-document")).toContainText("export const child = true;"); assert.equal(commands.at(-1).id, "child-0");
-  await page.getByRole("combobox", { name: "명령 처리 방식" }).click(); await page.getByRole("option", { name: "현재 작업 조정", exact: true }).click(); await input.fill("Reader 작업 조정"); await input.press("Control+Enter");
+  await page.getByRole("group", { name: "명령 처리 방식" }).getByRole("button", { name: "현재 작업 조정", exact: true }).click(); await input.fill("Reader 작업 조정"); await input.press("Control+Enter");
   await expect.poll(() => commands.at(-1)?.mode).toBe("interrupt"); assert.equal(commands.at(-1).id, "child-0");
   await page.setViewportSize({ width: 390, height: 844 }); await expect.poll(() => page.locator("body").evaluate(el => el.scrollWidth <= innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1100 }); await page.screenshot({ path: join(process.cwd(), ".local/delegation-ui.png"), fullPage: true }); assert.deepEqual(errors, []);

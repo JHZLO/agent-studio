@@ -78,7 +78,7 @@ test("Project toggles retain completed tasks and update without disrupting the c
   await expect(page.locator(".run-heading h1")).toHaveText("Task a1");
   await expect(task("a1")).toHaveAttribute("aria-current", "page");
   await page.getByRole("button", { name: "플로우", exact: true }).click();
-  await page.getByRole("button", { name: "Planner 이후 동작 설정", exact: true }).click();
+  await page.locator('.node [data-action="select-agent"][data-id="planner"]').click();
   await page.getByRole("combobox", { name: "사람 검토 시점", exact: true }).click();
   await page.getByRole("option", { name: "문제가 남으면 검토", exact: true }).click();
   await control("a1", "approve-review-only");

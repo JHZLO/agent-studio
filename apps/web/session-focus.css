@@ -28,7 +28,7 @@ body.session-expanded { overflow: hidden; }
 .expanded-workspace .session-head p { font-size: 11px; }
 .expanded-workspace .session-head-actions { gap: 6px; }
 .expanded-workspace .session-head-actions .btn { padding: 6px 10px; font-size: 11px; }
-.expanded-workspace .session-tabs { flex: none; padding: 8px 12px; gap: 3px; overflow-x: auto; }
+.expanded-workspace .session-tabs { flex: none; flex-wrap: nowrap; padding: 8px 12px; gap: 3px; overflow-x: auto; }
 .expanded-workspace .session-tabs .tab { flex: none; padding: 7px 10px; font-size: 12px; }
 .expanded-workspace .session-content { flex: 1; min-height: 0; max-height: none; padding: 20px; overflow: auto; overscroll-behavior: contain; }
 .expanded-workspace .message-text { font-size: 13px; line-height: 1.8; }
