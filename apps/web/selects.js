@@ -97,7 +97,7 @@ function createSelect(select) {
     const rightEdge = leftEdge + (viewport?.width || innerWidth) - 24;
     const bottomEdge = topEdge + (viewport?.height || innerHeight) - 24;
     if (!button.isConnected || !rect.height || rect.bottom < topEdge || rect.top > bottomEdge) { close(); return; }
-    const width = Math.min(rect.width, rightEdge - leftEdge);
+    const width = Math.min(Math.max(rect.width, 200), rightEdge - leftEdge);
     menu.style.width = `${width}px`;
     menu.style.left = `${Math.max(leftEdge, Math.min(rect.left, rightEdge - width))}px`;
     const below = bottomEdge - rect.bottom - 8, above = rect.top - topEdge - 8;

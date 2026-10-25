@@ -130,5 +130,14 @@ test("Studio selects preserve form behavior and work inside dialogs", { timeout:
     assert(above && trigger && above.y + above.height < trigger.y);
     await model.press("Escape");
   });
+  await t.test("Narrow triggers keep options readable near the viewport edge", async () => {
+    await model.evaluate((button: HTMLElement) => { button.style.width = "80px"; button.style.left = "auto"; button.style.right = "12px"; });
+    await model.click();
+    const menu = page.getByRole("listbox", { name: "Model", exact: true }), bounds = await menu.boundingBox();
+    assert(bounds && bounds.width >= 200 && bounds.x >= 12 && bounds.x + bounds.width <= 348);
+    for (const option of await menu.getByRole("option").all()) assert((await option.boundingBox())!.height <= 64);
+    await page.getByRole("option", { name: "A newly reported model", exact: true }).click();
+    await expect(model).toHaveText("A newly reported model");
+  });
   assert.deepEqual(errors, []);
 });
