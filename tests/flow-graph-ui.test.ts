@@ -101,7 +101,7 @@ test("Flow connections save branches, expose their live queues and show merge di
   await expect.poll(() => store.state().run?.steps.filter((step: Step) => step.status === "running").length).toBe(2);
   await expect(page.getByRole("heading", { name: "2 agents are working", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "View Coder session", exact: true }).click();
-  await page.getByLabel("Message Coder", { exact: true }).fill("Check idempotency"); await page.getByRole("button", { name: "Add to queue", exact: true }).click();
+  await page.getByLabel("Message Coder", { exact: true }).fill("Check idempotency"); await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(page.getByRole("region", { name: "Queued instructions", exact: true })).toContainText("Check idempotency");
   await page.getByRole("button", { name: "View Reviewer session", exact: true }).click();
   await expect(page.getByRole("region", { name: "Queued instructions", exact: true })).toHaveCount(0);

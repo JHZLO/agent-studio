@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { createServer, type ServerResponse } from "node:http";
 import { chromium, expect } from "@playwright/test";
@@ -55,6 +55,17 @@ test("Agent conversations support separate drafts, safe rendered replies, stop a
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.setDefaultTimeout(5000); page.on("pageerror", error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}`); await page.locator('.recent-task[data-id="chat-run"]').click();
   const composer = page.locator("#session-message"), send = page.getByRole("button", { name: "메시지 보내기", exact: true });
+  const timing = page.getByRole("group", { name: "명령 처리 방식", exact: true });
+  const queue = timing.getByRole("button", { name: "큐에 추가", exact: true }), interrupt = timing.getByRole("button", { name: "현재 작업 조정", exact: true });
+  async function checkTimingLayout(name: string) {
+    await expect(queue).toBeVisible(); await expect(interrupt).toBeVisible();
+    const layout = await page.locator(".session-composer").evaluate(form => {
+      const group = form.querySelector(".message-mode-switch")!.getBoundingClientRect(), input = form.querySelector("textarea")!.getBoundingClientRect(), submit = form.querySelector('[type="submit"]')!.getBoundingClientRect();
+      return { fits: group.left >= 0 && group.right <= innerWidth && submit.right <= innerWidth, clearsInput: group.top >= input.bottom, separate: submit.left >= group.right || submit.top >= group.bottom, labels: [...form.querySelectorAll(".message-mode-switch span")].every(label => label.getBoundingClientRect().height < 25 && label.scrollWidth <= label.clientWidth) };
+    });
+    assert.deepEqual(layout, { fits: true, clearsInput: true, separate: true, labels: true });
+    if (process.env.STUDIO_SCREENSHOT_DIR) { await expect(page.locator("#toast")).not.toHaveClass(/show/); await mkdir(process.env.STUDIO_SCREENSHOT_DIR, { recursive: true }); await page.screenshot({ path: join(process.env.STUDIO_SCREENSHOT_DIR, `composer-${name}.png`), fullPage: true }); }
+  }
   await expect(composer).toBeVisible(); await expect(page.locator(".session-content h2")).toHaveText("확인 결과"); assert.equal(await page.evaluate(() => (window as any).chatAttack), undefined);
   await composer.fill("계획 관련 질문 초안");
   await page.getByRole("button", { name: "Coder 세션 보기", exact: true }).click(); await expect(composer).toHaveValue("");
@@ -89,22 +100,32 @@ test("Agent conversations support separate drafts, safe rendered replies, stop a
   await expect(page.getByRole("button", { name: "확정 후 계속", exact: true })).toBeVisible();
   delete run.review; run.status = "running"; run.index = 1; run.steps[1].status = "running"; run.acceptingMessages = true; emit();
   await page.getByRole("button", { name: "Coder 세션 보기", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "명령 처리 방식" })).toHaveText("큐에 추가");
-  const queue = page.getByRole("button", { name: "큐에 추가", exact: true });
-  await composer.fill("턴이 끝나면 회귀 테스트도 확인"); await queue.click();
+  await expect(queue).toHaveAttribute("aria-pressed", "true"); await expect(interrupt).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("combobox", { name: "명령 처리 방식" })).toHaveCount(0);
+  await checkTimingLayout("fullscreen");
+  await composer.fill("턴이 끝나면 회귀 테스트도 확인"); await send.click();
   await expect.poll(() => commands.at(-1)?.mode).toBe("queue"); await expect(composer).toHaveValue("");
   await expect(page.getByRole("region", { name: "대기 중인 명령" })).toContainText("턴이 끝나면 회귀 테스트도 확인");
   await composer.fill("아직 보내지 않은 초안"); emit(); await expect(composer).toHaveValue("아직 보내지 않은 초안");
   await page.getByRole("button", { name: "대기 명령 취소", exact: true }).click();
   await expect(page.getByRole("region", { name: "대기 중인 명령" })).toHaveCount(0); assert.equal(commands.at(-1).action, "remove-message");
-  await page.getByRole("combobox", { name: "명령 처리 방식" }).click(); await page.getByRole("option", { name: "현재 작업 조정", exact: true }).click();
+  const beforeModeChange = commands.length;
+  await interrupt.focus(); await interrupt.press("Enter");
+  await expect(interrupt).toHaveAttribute("aria-pressed", "true"); await expect(queue).toHaveAttribute("aria-pressed", "false");
+  await expect(interrupt).toBeFocused(); await expect(composer).toHaveValue("아직 보내지 않은 초안");
+  emit(); await expect(interrupt).toBeFocused(); assert.equal(commands.length, beforeModeChange);
+  await expect(page.locator("#session-message-hint")).toHaveText("현재 턴을 중단한 뒤 새 명령을 처리합니다. 이미 수정한 파일은 유지됩니다.");
   await composer.fill("현재 접근을 멈추고 락 순서부터 확인"); await composer.press("Control+Enter");
   await expect.poll(() => commands.at(-1)?.mode).toBe("interrupt");
-  await expect(page.getByRole("button", { name: "현재 작업 조정", exact: true })).toBeDisabled();
+  await expect(send).toBeDisabled();
   await expect(page.getByRole("region", { name: "대기 중인 명령" })).toContainText("현재 접근을 멈추고 락 순서부터 확인");
-  await page.getByRole("combobox", { name: "명령 처리 방식" }).click(); await page.getByRole("option", { name: "큐에 추가", exact: true }).click(); await expect(queue).toBeEnabled();
+  await queue.click(); await expect(queue).toHaveAttribute("aria-pressed", "true"); await expect(send).toBeEnabled();
+  await page.setViewportSize({ width: 390, height: 844 }); await checkTimingLayout("fullscreen-mobile");
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "전체화면 종료", exact: true }).click(); await expect(queue).toBeVisible();
+  await checkTimingLayout("desktop");
   await page.setViewportSize({ width: 390, height: 844 }); await expect(composer).toBeVisible();
+  await checkTimingLayout("mobile");
   await expect.poll(() => page.locator("body").evaluate(el => el.scrollWidth <= innerWidth)).toBe(true);
   assert.deepEqual(errors, []);
 });
