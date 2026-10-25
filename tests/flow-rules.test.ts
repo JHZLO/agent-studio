@@ -436,3 +436,44 @@ for (const checkpoint of [false, true]) test(`Blocked plan changes reach Planner
   if (checkpoint) await f.review(await f.wait(started.id, "waiting_review"));
   await f.wait(started.id, "succeeded");
 });
+
+const requiredDecision = { id: "D1", question: "Which API contract should the implementation use?", options: ["A: synchronous response", "B: accepted reservation"], recommendation: "B supports asynchronous processing.", blocking: true };
+
+test("Required plan decisions survive restarts and block both approval actions until the updated draft resolves them", async t => {
+  const f = await fixture(t);
+  f.result(step => JSON.stringify({ ...JSON.parse(output(step)), decisions: [requiredDecision] }));
+  const started = await f.start(), first = await f.wait(started.id, "waiting_review");
+  assert.deepEqual(first.review!.decisions, [requiredDecision]);
+  await f.restart();
+  for (const action of ["approve-review", "approve-review-only"]) await assert.rejects(f.review(first, action), /Resolve required decisions/);
+  assert.equal(f.calls.length, 1); assert.equal(f.store.run(started.id)!.lockedPlan, undefined);
+
+  f.result(() => JSON.stringify({ summary: "Here are the tradeoffs.", status: "completed", decision: "pass", decisions: [], artifacts: [] }));
+  const explained = await f.message(first, "Explain the options.");
+  assert.deepEqual(explained.review!.decisions, [requiredDecision]);
+  f.result(step => output(step));
+  const incomplete = await f.message(explained, "Use B and update the plan.");
+  assert.equal(incomplete.review!.id, first.review!.id);
+  assert.match(incomplete.steps[0].messages.at(-1)!.text, /report remaining decisions explicitly/);
+
+  const optional = { ...requiredDecision, id: "D2", question: "Add an optional administrative endpoint later?", blocking: false };
+  f.result(step => JSON.stringify({ ...JSON.parse(output(step)), decisions: [optional], artifacts: ["implementation-plan.md", "qa-sheet.md"].map(name => ({ name, type: "Report", content: `${name}: accepted reservation (B) as selected by the user` })) }));
+  const updated = await f.message(incomplete, "Use B; leave the optional endpoint for later.");
+  assert.deepEqual(updated.review!.decisions, [optional]);
+  assert.notEqual(updated.review!.id, first.review!.id);
+  await assert.rejects(f.review(first), /changed or was already resolved/);
+  f.result(step => JSON.stringify({ ...JSON.parse(output(step)), decisions: [] }));
+  await f.review(updated); const done = await f.wait(started.id, "succeeded");
+  assert.deepEqual(done.lockedPlan!.artifactIds, updated.review!.artifactIds);
+  assert.match(f.calls.find(call => call.step.agent.role === "coder")!.prompt, /accepted reservation \(B\) as selected by the user/);
+});
+
+test("A Planner with unresolved required choices holds an otherwise automatic flow", async t => {
+  const f = await fixture(t, []);
+  f.result(step => JSON.stringify({ ...JSON.parse(output(step)), decisions: [requiredDecision] }));
+  const started = await f.start(), review = await f.wait(started.id, "waiting_review");
+  assert.equal(review.review!.lockOutputs, true);
+  assert.equal(review.steps[0].reviewRequired, true);
+  assert.equal(review.steps[1].status, "queued");
+  await assert.rejects(f.review(review), /Resolve required decisions/);
+});
