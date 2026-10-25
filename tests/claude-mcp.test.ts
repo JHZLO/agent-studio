@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
+import { EventEmitter } from "node:events";
 import { runtimeLoader, root, claudeBinary } from "../packages/engine/codex.ts";
 import { Studio } from "../packages/engine/studio.ts";
 import { Store } from "../packages/engine/store.ts";
@@ -45,6 +46,39 @@ test("A successful Claude report cannot hide a missing Studio tool connection", 
     await assert.rejects((studio as any).claudeTurn(run, run.steps[0], "Prepare the plan", {}), /Studio tool connection/);
     t.mock.restoreAll(); syncBuiltinESMExports();
   }
+});
+
+test("Claude turns stay active beyond an hour and accept their eventual result", async t => {
+  const cwd = await mkdtemp(join(tmpdir(), "studio-claude-long-turn-"));
+  const store = new Store(join(cwd, "state.sqlite")), studio = new Studio(store, cwd, cwd);
+  t.after(async () => { t.mock.restoreAll(); syncBuiltinESMExports(); await studio.close(); store.close(); await rm(cwd, { recursive: true, force: true }); });
+  const agent = { ...settingsSchema.parse(initialState()).agents[0], provider: "claude" as const };
+  const run = { id: "fixture", cwd, createdAt: new Date().toISOString(), status: "running", steps: [{ id: "planner", agent, messages: [] }] } as unknown as Run;
+  let signalStarted!: () => void;
+  const started = new Promise<void>(resolve => { signalStarted = resolve; });
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(), stderr: new EventEmitter(),
+    stdin: { end: () => queueMicrotask(() => {
+      child.stdout.emit("data", JSON.stringify({ type: "system", subtype: "init", model: "fixture", mcp_servers: [{ name: "studio", status: "connected" }] }) + "\n");
+      signalStarted();
+    }) },
+    kill: t.mock.fn(() => { queueMicrotask(() => child.emit("exit", null)); return true; }),
+  });
+  t.mock.method(childProcess, "spawn", (() => child) as unknown as typeof childProcess.spawn);
+  syncBuiltinESMExports();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const pending = (studio as any).claudeTurn(run, run.steps[0], "Complete the implementation", {});
+  let settled = false; void pending.then(() => { settled = true; }, () => { settled = true; });
+  await started;
+  t.mock.timers.tick(3_600_001);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(settled, false); assert.equal(child.kill.mock.callCount(), 0);
+  const result = { summary: "Finished the long implementation", status: "completed", decision: "pass", artifacts: [] };
+  child.stdout.emit("data", JSON.stringify({ type: "result", structured_output: result }) + "\n");
+  child.emit("exit", 0);
+  assert.deepEqual(JSON.parse(await pending), result);
+  assert.equal((studio as any).claudeProcesses.size, 0);
+  assert.equal((studio as any).mcpCapabilities.size, 0);
 });
 
 test("Claude follow-ups resume the saved session and reject a different session even with a valid report", async t => {

@@ -153,6 +153,31 @@ test("Codex resumes the exact idle thread with Studio restrictions and no duplic
   assert.equal(calls.some(call => call.method === "turn/start"), false); assert.match(refused.steps[1].messages.at(-1)!.text, /saved session is missing/);
 });
 
+test("Codex turns stay active beyond an hour and accept their eventual result", async t => {
+  const f = await fixture(t), run = f.run, step = run.steps[1], requests: string[] = [];
+  run.status = "running"; run.index = 1; step.status = "running"; delete step.finalText;
+  let signalStarted!: () => void;
+  const started = new Promise<void>(resolve => { signalStarted = resolve; });
+  t.mock.method(f.studio as any, "codexHost", async () => ({ client: { call: async (method: string) => {
+    requests.push(method);
+    if (method === "config/read") return { config: {} };
+    if (method === "thread/start") return { thread: { id: "long-turn-thread" }, model: "fixture" };
+    if (method === "turn/start") { signalStarted(); return { turn: { id: "long-turn" } }; }
+    return {};
+  } } }));
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const pending = (f.studio as any).codexTurn(run, step, "Complete the implementation", {});
+  let settled = false; void pending.then(() => { settled = true; }, () => { settled = true; });
+  await started;
+  t.mock.timers.tick(3_600_001);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  assert.equal(requests.includes("turn/interrupt"), false);
+  (f.studio as any).codexEvent(run, { method: "turn/completed", params: { threadId: step.providerThreadId, turn: { id: "long-turn", status: "completed", items: [{ type: "agentMessage", text: answer("Finished the long implementation") }] } } });
+  assert.equal(await pending, answer("Finished the long implementation"));
+  assert.equal((f.studio as any).turns.size, 0);
+});
+
 test("Stopping an active Codex reply interrupts only its selected turn and preserves completed steps", async t => {
   const f = await fixture(t), interrupted: Wire[] = [];
   let activeRun: Run, activeStep: Step;
