@@ -114,6 +114,8 @@ Open **Flows** and select a step. **After this step** controls when a person rev
 
 When a task needs review, open **Review outputs**. Read the plan and QA sheet, request changes with feedback, or choose **Lock only** to approve and remain paused. **Lock and continue** starts the next step. Later drafts can be compared with earlier drafts, and **Attempts** retains previous conversations and outputs. Human review does not grant file, shell, or network permissions.
 
+Planner reports unresolved choices as decision cards above the plan. Each card includes the options, a recommendation, and whether an answer is required before coding. Choose an option or type an answer, then select **Update plan with answers**. You can answer a few at a time. Planner returns the complete updated plan and QA sheet; the task stays at review. Required choices disable both lock actions, and the runner rejects approval until they are resolved in the revised draft. A recommendation is not an approved choice. Follow-up explanations without revised documents do not clear pending decisions.
+
 To plan with the agent before coding, set the Planner step to **Review before continuing**, enable **Lock reviewed outputs**, and return revisions to the Planner. Its review panel accepts questions and changes; each submission produces a new draft while Coder stays queued. **Lock only** keeps Coder waiting until you resume. Existing flows retain their saved rules, so check the selected flow before starting. Completed runs retain their original snapshots.
 
 Attach the relevant architecture skills to both Planner and Coder when the plan must follow a specific codebase. Ask Planner to specify the package layout, responsibilities, transaction boundaries, and test criteria, then inspect those choices before locking. Skill instructions guide implementation; they do not replace code review or test evidence.
@@ -138,7 +140,9 @@ The flow canvas draws return arrows. The task shows the shared count, the latest
 
 At a human review limit, enter feedback and choose **Run one more revision** or **Revisit plan**. Revisiting the plan clears the old lock and holds Coder until the new plan is approved. Neither action resets the automatic revision counter. Cancellation remains available from the task controls.
 
-If an automatic step reports a change to a locked plan, Studio sends its findings and the approved outputs back to the Planner automatically. Coder does not request a separate human review. Planner revises the plan and QA sheet, then waits for a new plan approval before coding can resume. Explicit reviews on the reporting step still apply. If no upstream locked Planner is available, Studio holds the scope change for a person to resolve.
+If an automatic step reports a change to a locked plan, including a blocked implementation caused by that plan conflict, Studio sends its findings and the approved outputs back to the Planner automatically. Coder does not request a separate human review. Planner revises the plan and QA sheet, then waits for a new plan approval before coding can resume. Explicit reviews on the reporting step still apply. If no upstream locked Planner is available, Studio holds the scope change for a person to resolve.
+
+Revision instructions apply only to the agent receiving that revision. Later agents receive the relevant findings and prior output IDs as evidence. A Planner-only instruction to stop before implementation is not forwarded as an instruction to Coder.
 
 Changes to an approved plan require another human review at the Planner checkpoint. Approval checks the reviewed output versions and project fingerprint; changed files require a fresh revision. Pending human reviews survive a runner restart. Superseded outputs remain in history and are not passed forward as current evidence.
 
