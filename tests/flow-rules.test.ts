@@ -399,3 +399,40 @@ test("Revisiting the plan clears the old lock and requires a new approval", asyn
   await f.review(plan); const done = await f.wait(started.id, "succeeded");
   assert.equal(done.lockedPlan?.version, 2); assert.equal(done.loopCounts?.["shared:coder"], 2);
 });
+
+
+test("Revision instructions stay with their target while downstream agents retain evidence", async t => {
+  const f = await fixture(t), started = await f.start(), first = await f.wait(started.id, "waiting_review");
+  const instruction = "Planner only: revise the plan; do not implement in this step.";
+  await f.review(first, "request-revision", instruction);
+  const revised = await f.wait(started.id, "waiting_review");
+  assert.ok(f.calls.at(-1)!.prompt.includes(instruction));
+  await f.review(revised); await f.wait(started.id, "succeeded");
+  for (const call of f.calls.filter(call => call.step.agent.role !== "planner")) {
+    assert.equal(call.step.feedback, undefined);
+    assert.equal(call.prompt.includes(instruction), false);
+    assert.ok(first.review!.artifactIds.every(id => call.step.feedbackArtifactIds?.includes(id)));
+    assert.match(call.prompt, /output IDs as evidence/);
+  }
+});
+
+for (const checkpoint of [false, true]) test(`Blocked plan changes reach Planner without an execution failure (checkpoint=${checkpoint})`, async t => {
+  const f = await fixture(t, checkpoint ? [...rules, { after: "coder", review: "always" }] : rules);
+  f.result(step => output(step, step.agent.role === "coder" && !step.attempt ? "scope_change" : "pass", step.agent.role === "coder" && !step.attempt ? "blocked" : "completed"));
+  const started = await f.start(); await f.review(await f.wait(started.id, "waiting_review"));
+  let review = await f.wait(started.id, "waiting_review");
+  if (checkpoint) {
+    assert.equal(review.review!.kind, "scope_change");
+    assert.equal(review.steps[1].status, "waiting_review");
+    await assert.rejects(f.review(review), /cannot advance/);
+    await f.review(review, "request-revision", "Resolve the conflict in the plan.");
+    review = await f.wait(started.id, "waiting_review");
+  }
+  assert.equal(review.review!.stepId, review.steps[0].id);
+  assert.equal(review.steps[1].status, "queued");
+  assert.equal(review.stepHistory!.find(step => step.agent.role === "coder")!.status, "waiting_review");
+  assert.equal(review.lockedPlan, undefined);
+  await f.review(review);
+  if (checkpoint) await f.review(await f.wait(started.id, "waiting_review"));
+  await f.wait(started.id, "succeeded");
+});

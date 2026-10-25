@@ -214,9 +214,13 @@ test("A parallel scope change takes precedence over an automatic implementation 
   assert.equal(waiting.loopCounts?.reviewer, undefined);
 });
 
-test("Automatic parallel scope changes collect peer findings and return to the locked Planner", async t => {
+for (const status of ["completed", "blocked"]) test(`Automatic parallel scope changes collect peer findings and return to the locked Planner (${status})`, async t => {
   const f = await fixture(t, { edges: [{ from: "planner", to: "coder" }, { from: "coder", to: "reviewer" }, { from: "coder", to: "documenter" }], rules: [{ after: "planner", review: "always", lockOutputs: true }, { after: "reviewer", loop: { target: "coder", maxCycles: 2, onLimit: "review" } }] });
-  f.result(async (_run, step) => output(step, step.agent.id === "documenter" ? "scope_change" : step.agent.id === "reviewer" ? "revise" : "pass"));
+  f.result(async (_run, step) => {
+    const result = JSON.parse(output(step, step.agent.id === "documenter" ? "scope_change" : step.agent.id === "reviewer" ? "revise" : "pass"));
+    if (step.agent.id === "documenter") result.status = status;
+    return JSON.stringify(result);
+  });
   const run = await f.start(); await f.review(await f.wait(run.id, "waiting_review"));
   const planning = await f.wait(run.id, "waiting_review");
   assert.equal(planning.review!.stepId, planning.steps[0].id); assert.equal(planning.review!.kind, "checkpoint");
