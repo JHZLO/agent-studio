@@ -2,12 +2,12 @@
   "use strict";
 
   const roles = {
-    planner: { label: "Planner", icon: "compass", color: "#5b41bd", background: "#dccfff", description: "Turn the brief into a clear plan and a QA sheet before anyone writes code." },
-    coder: { label: "Coder", icon: "code", color: "#23629f", background: "#c6e3ff", description: "Implement the plan in an isolated worktree, following your coding rules." },
-    reviewer: { label: "Reviewer", icon: "shield", color: "#1b7451", background: "#c4efd9", description: "Review the actual changes and link findings to the tested version." },
-    backend: { label: "Backend QA", icon: "terminal", color: "#85600a", background: "#ffe9a6", description: "Exercise API edge cases and run bounded load tests against a test target." },
-    frontend: { label: "Frontend QA", icon: "browser", color: "#ab3567", background: "#ffd0e1", description: "Walk through the QA sheet in a browser and collect visible evidence." },
-    documenter: { label: "Documenter", icon: "file", color: "#a9501f", background: "#ffd8c0", description: "Update documentation using verified changes and the test results." },
+    planner: { label: "Planner", background: "#c7b8ff", accent: "#8f7ae6", description: "Turn the brief into a clear plan and a QA sheet before anyone writes code." },
+    coder: { label: "Coder", background: "#a9d6ff", accent: "#5f9be0", description: "Implement the plan in an isolated worktree, following your coding rules." },
+    reviewer: { label: "Reviewer", background: "#a8e8c9", accent: "#4fb487", description: "Review the actual changes and link findings to the tested version." },
+    backend: { label: "Backend QA", background: "#ffe28a", accent: "#d9a92e", description: "Exercise API edge cases and run bounded load tests against a test target." },
+    frontend: { label: "Frontend QA", background: "#ffc2d6", accent: "#e07aa0", description: "Walk through the QA sheet in a browser and collect visible evidence." },
+    documenter: { label: "Documenter", background: "#ffcfae", accent: "#e88f5a", description: "Update documentation using verified changes and the test results." },
   };
 
   const models = {

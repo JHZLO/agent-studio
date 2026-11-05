@@ -29,7 +29,7 @@
     linkFrom: null, zoom: null, connectProvider: "codex", connectAuth: "subscription",
     skillQuery: "", pickerDraft: null, pickerTarget: null, pickerQuery: "", starting: false,
     navigationOpen: false, navigationActions: false,
-    projectDraft: null, folderRequest: null, folderListing: null,
+    projectDraft: null, folderRequest: null, folderListing: null, freshRun: null,
   };
   let toastTimer;
   let connectionTimer;
@@ -41,7 +41,6 @@
 
   const iconPaths = {
     folder: '<path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm0 2h18"/>',
-    computer: '<rect x="4" y="3" width="16" height="13" rx="2"/><path d="M2 20h20M9 16v4m6-4v4"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',
     archive: '<path d="M4 8v12h16V8M3 3h18v5H3zM9 12h6"/>',
     sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m6-11-3 3 3 3"/>',
@@ -68,11 +67,9 @@
     up: '<path d="M12 20V4m-6 6 6-6 6 6"/>',
     down: '<path d="M12 4v16m-6-6 6 6 6-6"/>',
     file: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6Z"/><path d="M14 3v6h6M8 13h8m-8 4h5"/>',
-    compass: '<circle cx="12" cy="12" r="9"/><path d="m16 8-2.5 5.5L8 16l2.5-5.5L16 8Z"/>',
     code: '<path d="m7 7-5 5 5 5m10-10 5 5-5 5m-3-14-4 18"/>',
     shield: '<path d="m12 3 8 3v6c0 5-8 9-8 9S4 17 4 12V6l8-3Z"/><path d="m8 12 3 3 5-6"/>',
     terminal: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m6 8 4 4-4 4m7 0h5"/>',
-    browser: '<rect x="2" y="3" width="20" height="18" rx="2"/><path d="M2 8h20M6 5.5h.01M10 5.5h.01M8 13l3 3 5-5"/>',
     branch: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M6 7v10m12-10c0 7-12 2-12 8"/>',
     message: '<path d="M21 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v9Z"/><path d="M7 8h10M7 12h7"/>',
     cursor: '<path d="m4 3 6 18 3-8 8-3L4 3Z"/>',
@@ -92,10 +89,50 @@
   const selected = (actual, expected) => actual === expected ? " selected" : "";
   const providerName = provider => provider === "codex" ? "Codex" : "Claude Code";
   const authName = auth => auth === "api" ? "API key" : "Subscription";
-  const agentStyle = agent => `--agent-color:${roles[agent.role].color};--agent-bg:${roles[agent.role].background}`;
-  const agentIcon = (agent, large = false, mood = "") => `<span class="agent-icon${large ? " large" : ""}${mood ? ` is-${mood}` : ""}" data-role="${agent.role}" style="${agentStyle(agent)}"><span class="agent-eyes"><i></i><i></i></span>${icon(roles[agent.role].icon, "agent-badge")}</span>`;
-  const brandMark = '<svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="12.5" cy="13.5" r="8.5" fill="#dccfff" stroke="#2b2238" stroke-width="1.6"/><circle cx="23.5" cy="13.5" r="8.5" fill="#c4efd9" stroke="#2b2238" stroke-width="1.6"/><circle cx="18" cy="23" r="9" fill="#ffd0e1" stroke="#2b2238" stroke-width="1.6"/><ellipse cx="15.2" cy="22.5" rx="1.3" ry="1.8" fill="#2b2238"/><ellipse cx="20.8" cy="22.5" rx="1.3" ry="1.8" fill="#2b2238"/></svg>';
-  const tints = ["lavender", "sky", "mint", "butter", "rose", "peach"];
+  const agentStyle = agent => `--agent-bg:${roles[agent.role].background}`;
+  // 16x16 sprites: four hat rows per role on a shared body. K outline, S skin, B blush, M mouth, C and D role colors.
+  const spriteBody = ["...KSSSSSSSSK...", "...KSKSSSSKSK...", "...KSKSSSSKSK...", "...KBSSSSSSBK...", "....KSSMMSSK....", "....KKCCCCKK....", "...KCCCCCCCCK...", "..KSKCCCCCCKSK..", "..KSKCCDDCCKSK..", "...KKCCCCCCKK...", "....KDDKKDDK....", "....KKK..KKK...."];
+  const spriteHats = {
+    planner: [".......KK.......", "......KDDK......", ".....KDYDDK.....", "..KDDDDDDDDDDK.."],
+    coder: ["................", ".....KKKKKK.....", "....KDDDDDDK....", "...KDDDDDDDDDDK."],
+    reviewer: ["........K.......", ".....KKKKKK.....", "...KKDDDDDDKK...", "...KDDDDDDDDK..."],
+    backend: ["................", ".....KKKKKK.....", "....KHHWHHHK....", "..KKHHHHHHHHKK.."],
+    frontend: ["....KK....KK....", "...KCK....KCK...", "...KCK....KCK...", "....KKKKKKKK...."],
+    documenter: ["..........KK....", ".........KWK....", "....KKKKKKWK....", "...KDDDDDDDDK..."],
+  };
+  const spriteItems = { reviewer: [[8, 13, "K"], [8, 14, "K"], [8, 15, "K"], [9, 13, "K"], [9, 14, "G"], [9, 15, "K"], [10, 13, "K"], [10, 14, "K"], [10, 15, "K"]] };
+  const spriteCache = {};
+  function sprite(role) {
+    if (spriteCache[role]) return spriteCache[role];
+    const rows = [...spriteHats[role], ...spriteBody].map(row => [...row]);
+    for (const [row, column, value] of spriteItems[role] || []) rows[row][column] = value;
+    const colors = { K: "#3b2f4a", S: "#ffe3cf", B: "#ffb3b8", M: "#d9737f", W: "#ffffff", Y: "#fff1a6", G: "#d7f1ff", H: "#ffc93d", C: roles[role].background, D: roles[role].accent };
+    let rects = "";
+    rows.forEach((row, y) => {
+      for (let x = 0; x < row.length;) {
+        let end = x;
+        while (row[end + 1] === row[x]) end++;
+        if (row[x] !== ".") rects += `<rect x="${x}" y="${y}" width="${end - x + 1}" height="1" fill="${colors[row[x]]}"/>`;
+        x = end + 1;
+      }
+    });
+    return (spriteCache[role] = `<svg class="sprite" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">${rects}</svg>`);
+  }
+  const agentIcon = (agent, large = false, mood = "") => `<span class="agent-icon${large ? " large" : ""}${mood ? ` is-${mood}` : ""}" data-role="${agent.role}" style="${agentStyle(agent)}">${sprite(agent.role)}</span>`;
+  const brandMark = '<svg viewBox="0 0 8 8" shape-rendering="crispEdges" aria-hidden="true"><rect x="1" y="1" width="2" height="2" fill="#c7b8ff"/><rect x="3" y="1" width="2" height="2" fill="#a9d6ff"/><rect x="5" y="1" width="2" height="2" fill="#a8e8c9"/><rect x="1" y="3" width="2" height="2" fill="#ffe28a"/><rect x="3" y="3" width="2" height="2" fill="#3b2f4a"/><rect x="5" y="3" width="2" height="2" fill="#ffc2d6"/><rect x="1" y="5" width="6" height="2" fill="#ffcfae"/></svg>';
+  const pixelCloud = '<svg class="cloud" viewBox="0 0 24 10" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 2h6V1h4v2h3v2h3v4H1V6h2V4h3z" fill="#fff"/></svg>';
+  const pixelHills = '<svg class="hills" viewBox="0 0 120 11" preserveAspectRatio="none" shape-rendering="crispEdges" aria-hidden="true"><path d="M0 11V7h8V5h6V3h8v2h6v2h10V4h6V2h10v2h6v3h12V5h8V3h10v3h8v2h12v3z" fill="#c9ecd0"/><path d="M0 11V9h14V8h10V7h14v2h18V8h12V6h12v2h16V7h12v2h12v2z" fill="#b2e2bd"/></svg>';
+  const hourglass = "M1 0h6v1H6v2L5 4l1 1v2h1v1H1V7h1V5l1-1-1-1V1H1z";
+  const statusPixels = {
+    succeeded: ["M3 0h2v2h3v2H6v1l1 3H5L4 6 3 8H1l1-3V4H0V2h3z", "#ffd24d"],
+    running: [hourglass, "#8fc4f5"],
+    paused: [hourglass, "#c9bedb"],
+    waiting_approval: ["M3 0h2v5H3zM3 6h2v2H3z", "#ff8fab"],
+    failed: ["M0 0h2v1h1v1h2V1h1V0h2v2H7v1H6v2h1v1h1v2H6V7H5V6H3v1H2v1H0V6h1V5h1V3H1V2H0z", "#e07aa0"],
+  };
+  const statusIcon = status => { const [path, color] = statusPixels[status] || ["M1 1h6v6H1z", "#d8cfe0"]; return `<svg class="status-icon" viewBox="0 0 8 8" shape-rendering="crispEdges" aria-hidden="true"><path d="${path}" fill="${color}"/></svg>`; };
+  const leadLines = { planner: "Tell me the task. I'll draft the plan first.", coder: "Tell me the task. I'll start with the code.", reviewer: "Tell me the task. I'll start with a review.", backend: "Tell me the task. I'll start with the API tests.", frontend: "Tell me the task. I'll check it in the browser.", documenter: "Tell me the task. I'll start with the docs." };
+  const tints = ["lilac", "sky", "mint", "butter", "rose", "peach"];
   const tintOf = text => tints[[...String(text)].reduce((sum, character) => sum + character.charCodeAt(0), 0) % tints.length];
   const briefIdeas = [
     "Add a newsletter signup with duplicate-safe validation",
@@ -117,33 +154,30 @@
     const previous = state.run?.status;
     state.run = run;
     if (ui.followRun && run) ui.step = Math.min(run.index, run.steps.length - 1);
+    // Mark only the render that finishes the run, so the party cheers once.
+    if (run?.status === "succeeded" && previous && previous !== "succeeded" && !reducedMotion.matches) ui.freshRun = run.id;
     persist();
     render(true);
-    if (run?.status === "succeeded" && previous && previous !== "succeeded") celebrate();
+    ui.freshRun = null;
   }
 
-  function stamp(text) {
-    if (reducedMotion.matches) return;
-    const element = document.createElement("div");
-    element.className = "stamp";
-    element.setAttribute("aria-hidden", "true");
-    element.textContent = text;
-    document.body.append(element);
-    setTimeout(() => element.remove(), 1400);
+  let typingTimer;
+  function typeLine(element) {
+    clearInterval(typingTimer);
+    if (!element) return;
+    const text = element.textContent;
+    let shown = 0;
+    element.textContent = "";
+    typingTimer = setInterval(() => { element.textContent = text.slice(0, ++shown); if (shown >= text.length) clearInterval(typingTimer); }, 28);
   }
 
-  function celebrate() {
-    if (reducedMotion.matches) return;
-    const colors = ["--lavender-2", "--sky-2", "--mint-2", "--butter-2", "--rose-2", "--peach-2"];
-    const burst = document.createElement("div");
-    burst.className = "confetti";
-    burst.setAttribute("aria-hidden", "true");
-    burst.innerHTML = Array.from({ length: 36 }, (_, index) => {
-      const angle = Math.random() * Math.PI * 2, distance = 160 + Math.random() * 260;
-      return `<i style="--x:${Math.round(Math.cos(angle) * distance)}px;--y:${Math.round(Math.sin(angle) * distance + 120)}px;--r:${Math.round(Math.random() * 720 - 360)}deg;--c:var(${colors[index % colors.length]});--d:${(Math.random() * .15).toFixed(2)}s"></i>`;
-    }).join("");
-    document.body.append(burst);
-    setTimeout(() => burst.remove(), 1900);
+  let listenTimer;
+  function listen() {
+    const member = app.querySelector(".party-member");
+    if (!member) return;
+    member.classList.add("listening");
+    clearTimeout(listenTimer);
+    listenTimer = setTimeout(() => member.classList.remove("listening"), 1200);
   }
 
   let engine = new DemoEngine(onRunChange, state.run);
@@ -238,6 +272,7 @@
       const replacement = focused.isConnected ? focused : [...app.querySelectorAll("button, input, textarea, select")].find(element => focusAttributes.every(([name, value]) => element.getAttribute(name) === value));
       replacement?.focus({ preventScroll: true });
     }
+    if (entering && ui.view === "home" && !reducedMotion.matches) typeLine(app.querySelector(".dialog-line"));
     if (renderedView !== ui.view) { window.scrollTo(0, 0); renderedView = ui.view; }
     resizeObserver?.disconnect();
     const viewport = document.querySelector(".canvas-viewport");
@@ -253,10 +288,14 @@
     const execution = project?.execution;
     const recent = [state.run, ...state.history].filter(run => run && (run.project?.id || null) === (project?.id || null)).slice(0, 3);
     const crew = currentFlow().workflow.map(id => state.agents.find(agent => agent.id === id));
-    const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-    const crewStack = crew.length ? `<span class="crew-stack">${crew.slice(0, 5).map(agent => agentIcon(agent)).join("")}${crew.length > 5 ? `<span class="crew-more">+${crew.length - 5}</span>` : ""}</span>` : "";
-    const lineup = `<aside class="lineup" aria-label="Relay order"><div class="lineup-head"><span class="eyebrow">Relay order</span>${button("navigate", "Edit", "edit", "text small", 'data-view="team" aria-label="Edit flow"')}</div>${crew.length ? `<ol>${crew.map((agent, index) => `<li style="${agentStyle(agent)}">${agentIcon(agent)}<span><strong>${escape(agent.name)}</strong><small>${roleOutputs[agent.role]}</small></span><span class="lineup-num">${String(index + 1).padStart(2, "0")}</span></li>`).join("")}</ol>` : '<p class="lineup-empty">No agents in this flow yet.</p>'}<p class="lineup-note">${icon("leaf")}Each step opens a fresh session and passes a short handoff.</p></aside>`;
-    return `<div class="task-start"><header class="hello"><span class="eyebrow">${today}</span><h1>What should your <em>team</em> take on today?</h1></header><div class="home-grid"><div class="home-main"><section class="task-composer" aria-label="Start a task"><div class="composer-context"><div class="composer-location">${button("project-picker", escape(project?.name || "Select project"), "folder", "composer-project", `aria-label="Select project" title="${escape(project?.path || "Select a local project")}"`)}<span class="computer-label">${icon("computer")}This computer</span></div>${button("project-settings", execution?.mode === "worktree" ? "New worktree" : "Local", execution?.mode === "worktree" ? "branch" : "sliders", "execution-button", 'aria-label="Local environment settings"', !project)}</div><label class="sr-only" for="task-brief">Task brief</label><textarea id="task-brief" maxlength="2000" rows="4" placeholder="Describe the task...">${escape(state.brief)}</textarea><div class="composer-footer"><button type="button" class="crew-picker" data-action="flow-picker" aria-label="Select flow">${crewStack}<span><small>Flow</small><strong>${escape(currentFlow().name)}</strong></span>${icon("chevron")}</button>${button("run", ui.starting ? "Preparing..." : engine.isActive() ? "View active task" : "Run preview", "arrow", "primary start-task", "", ui.starting)}</div></section><div class="brief-ideas" role="group" aria-label="Example tasks"><span>Try</span>${briefIdeas.map((idea, index) => `<button type="button" class="idea-chip" data-action="use-idea" data-index="${index}">${icon("spark")}${escape(idea)}</button>`).join("")}</div>${recent.length ? `<section class="recent-work"><div class="section-title"><h2>Recent tasks</h2>${button("navigate", "All tasks", "arrow", "text", 'data-view="runs"')}</div>${recent.map(run => `<button class="recent-task" data-action="open-run" data-id="${escape(run.id)}">${icon("clock")}<span><strong>${escape(run.brief)}</strong></span>${statusBadge(run.status)}${icon("chevron")}</button>`).join("")}</section>` : ""}</div>${lineup}</div></div>`;
+    const lead = crew[0];
+    const today = new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).toUpperCase();
+    const party = crew.length ? crew.map((agent, index) => `<button type="button" class="party-member" data-action="configure-agent" data-id="${escape(agent.id)}" style="${agentStyle(agent)}" aria-label="Configure ${escape(agent.name)}, step ${index + 1}"><span class="party-bubble">${roleOutputs[agent.role]}</span>${agentIcon(agent)}<span class="party-plate">${escape(agent.name)}</span><small>Step ${index + 1}</small></button>`).join("") : '<p class="party-empty">No agents in this flow yet.</p>';
+    const scene = `<section class="scene" aria-label="Your team"><div class="scene-copy"><span class="scene-date">${today}</span><h1>What should your team take on today?</h1></div>${button("navigate", "Edit flow", "edit", "small scene-edit", 'data-view="team" aria-label="Edit flow"')}${pixelCloud.repeat(3)}${pixelHills}<span class="ground"></span><div class="party" style="--party:${Math.max(crew.length, 1)}">${party}</div></section>`;
+    const composer = `<section class="task-composer" aria-label="Start a task"><div class="dialog-portrait" ${lead ? `style="${agentStyle(lead)}"` : ""}>${lead ? agentIcon(lead, true) : ""}</div><div class="dialog-body"><span class="dialog-speaker">${escape(lead?.name || "Agent Studio")}</span><p class="dialog-line">${lead ? leadLines[lead.role] : "Add an agent to this flow to start a task."}</p><label class="sr-only" for="task-brief">Task brief</label><textarea id="task-brief" maxlength="2000" rows="3" placeholder="Describe the task...">${escape(state.brief)}</textarea><div class="composer-footer">${button("project-picker", escape(project?.name || "Select project"), "folder", "small composer-project", `aria-label="Select project" title="${escape(project?.path || "Select a local project")}"`)}${button("project-settings", execution?.mode === "worktree" ? "New worktree" : "Local", execution?.mode === "worktree" ? "branch" : "sliders", "small execution-button", 'aria-label="Local environment settings"', !project)}<button type="button" class="crew-picker" data-action="flow-picker" aria-label="Select flow"><span><small>Flow</small><strong>${escape(currentFlow().name)}</strong></span>${icon("chevron")}</button>${button("run", ui.starting ? "Preparing..." : engine.isActive() ? "View active task" : "Run preview", "arrow", "primary start-task", "", ui.starting)}</div></div></section>`;
+    const ideas = `<div class="brief-ideas" role="group" aria-label="Example tasks"><span>Try</span>${briefIdeas.map((idea, index) => `<button type="button" class="idea-chip" data-action="use-idea" data-index="${index}">${icon("spark")}${escape(idea)}</button>`).join("")}</div>`;
+    const recentTasks = recent.length ? `<section class="recent-work"><div class="section-title"><h2>Recent tasks</h2>${button("navigate", "All tasks", "arrow", "text", 'data-view="runs"')}</div>${recent.map(run => `<button class="recent-task" data-action="open-run" data-id="${escape(run.id)}">${statusIcon(run.status)}<span><strong>${escape(run.brief)}</strong></span>${statusBadge(run.status)}${icon("chevron")}</button>`).join("")}</section>` : "";
+    return `<div class="task-start">${scene}${composer}${ideas}${recentTasks}</div>`;
   }
 
   function teamView() {
@@ -296,7 +335,7 @@
       }
       nodes += `<div class="node ${ui.selected === id ? "selected" : ""}" style="${agentStyle(agent)};left:${pos.x}px;top:${pos.y}px"><button class="node-body" data-action="select-agent" data-id="${escape(id)}" aria-label="Configure ${escape(agent.name)}" aria-pressed="${ui.selected === id}"><span class="node-top">${agentIcon(agent)}<span class="node-name">${escape(agent.name)}</span></span><span class="node-output">${roleOutputs[agent.role]}</span><span class="node-bottom"><span class="node-status">${providerName(agent.provider)}</span><span class="node-number">${String(index + 1).padStart(2, "0")}</span></span></button><button class="port ${inputSide}" data-action="connect-to" data-id="${escape(id)}" aria-label="Connect to ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button><button class="port ${outputSide} ${ui.linkFrom === id ? "linking" : ""}" data-action="connect-from" data-id="${escape(id)}" aria-label="Connect from ${escape(agent.name)}" ${engine.isActive() ? "disabled" : ""}></button></div>`;
     });
-    return `<svg class="connections-svg" viewBox="0 0 820 ${height}" style="height:${height}px" aria-hidden="true"><defs><marker id="arrowhead" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0 0L5 2.5L0 5" fill="none" stroke="#2b2238" stroke-width="1"/></marker></defs>${lines}</svg><div class="flow-caption" style="top:27px">${icon("message")} YOUR BRIEF</div>${nodes}${!currentFlow().workflow.length ? `<div style="padding:100px 70px"><h2>No agents yet</h2><p style="margin-top:15px">Add an agent to create the first step.</p></div>` : ""}`;
+    return `<svg class="connections-svg" viewBox="0 0 820 ${height}" style="height:${height}px" shape-rendering="crispEdges" aria-hidden="true"><defs><marker id="arrowhead" viewBox="0 0 4 5" markerWidth="12" markerHeight="15" refX="3.5" refY="2.5" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0h1v1h1v1h1v1H2v1H1v1H0z" fill="#3b2f4a"/></marker></defs>${lines}</svg><div class="flow-caption" style="top:27px">${icon("message")} YOUR BRIEF</div>${nodes}${!currentFlow().workflow.length ? `<div style="padding:100px 70px"><h2>No agents yet</h2><p style="margin-top:15px">Add an agent to create the first step.</p></div>` : ""}`;
   }
 
   function sizeCanvas() {
@@ -329,7 +368,7 @@
 
   function agentsView() {
     return heading("Your <em>agents</em>", "Give each role a purpose, a model, and a set of boundaries.", button("new-agent", "New agent", "plus", "primary"), "Reusable presets") +
-      `<div class="content-grid">${state.agents.map(agent => `<section class="panel agent-card tilt" style="${agentStyle(agent)}"><div class="card-top">${agentIcon(agent, true)}<div><h2>${escape(agent.name)}</h2><p>${providerName(agent.provider)} / ${escape(agent.model)}</p></div></div><p>${escape(roles[agent.role].description)}</p><div class="skill-list">${agent.skillBindings.length ? agent.skillBindings.map(skill => `<span class="skill-chip" aria-pressed="true">${icon("file")}${escape(skill.name)}</span>`).join("") : '<span class="meta">No skills attached</span>'}</div><div class="card-footer">${currentFlow().workflow.includes(agent.id) ? '<span class="badge">In workflow</span>' : button("add-existing", "Add to workflow", "plus", "small", `data-id="${escape(agent.id)}"`, engine.isActive())}${button("edit-agent", "Edit preset", "edit", "text small", `data-id="${escape(agent.id)}"`)}</div></section>`).join("")}</div>`;
+      `<div class="content-grid">${state.agents.map(agent => `<section class="panel agent-card" style="${agentStyle(agent)}"><div class="card-top">${agentIcon(agent, true)}<div><h2>${escape(agent.name)}</h2><p>${providerName(agent.provider)} / ${escape(agent.model)}</p></div></div><p>${escape(roles[agent.role].description)}</p><div class="skill-list">${agent.skillBindings.length ? agent.skillBindings.map(skill => `<span class="skill-chip" aria-pressed="true">${icon("file")}${escape(skill.name)}</span>`).join("") : '<span class="meta">No skills attached</span>'}</div><div class="card-footer">${currentFlow().workflow.includes(agent.id) ? '<span class="badge">In workflow</span>' : button("add-existing", "Add to workflow", "plus", "small", `data-id="${escape(agent.id)}"`, engine.isActive())}${button("edit-agent", "Edit preset", "edit", "text small", `data-id="${escape(agent.id)}"`)}</div></section>`).join("")}</div>`;
   }
 
   function bindingField(bindings) {
@@ -394,7 +433,7 @@
   function runsView() {
     const runs = [state.run, ...state.history].filter(Boolean);
     return heading("Your <em>tasks</em>","Pick up where you left off. Every conversation and output stays with the task.", button("navigate", "New task", "plus", "primary", 'data-view="home"'), "Your workspace") +
-      (runs.length ? `<section class="panel"><table class="history-table"><thead><tr><th>TASK</th><th>STATUS</th><th>OUTPUTS</th><th></th></tr></thead><tbody>${runs.map(run => `<tr><td><strong>${escape(run.brief)}</strong><small>${escape(run.id)} / ${escape(run.flow?.name || "Feature delivery")}</small></td><td>${statusBadge(run.status)}</td><td>${run.artifacts.length} files</td><td>${button("open-run", "Open task", "arrow", "text small", `data-id="${run.id}"`)}</td></tr>`).join("")}</tbody></table></section>` : emptyState("clock", "Your first task starts here", "Describe a task and choose your team. Follow its progress, approvals, and outputs here.", button("navigate", "New task", "plus", "primary", 'data-view="home"')));
+      (runs.length ? `<section class="panel"><table class="history-table"><thead><tr><th>TASK</th><th>STATUS</th><th>OUTPUTS</th><th></th></tr></thead><tbody>${runs.map(run => `<tr><td><div class="task-cell">${statusIcon(run.status)}<div><strong>${escape(run.brief)}</strong><small>${escape(run.id)} / ${escape(run.flow?.name || "Feature delivery")}</small></div></div></td><td>${statusBadge(run.status)}</td><td>${run.artifacts.length} files</td><td>${button("open-run", "Open task", "arrow", "text small", `data-id="${run.id}"`)}</td></tr>`).join("")}</tbody></table></section>` : emptyState("clock", "Your first task starts here", "Describe a task and choose your team. Follow its progress, approvals, and outputs here.", button("navigate", "New task", "plus", "primary", 'data-view="home"')));
   }
 
   function emptyState(iconName, title, description, action = "") {
@@ -415,9 +454,9 @@
     const followControl = isCurrent && engine.isActive() ? (ui.followRun ? '<span class="badge">Following live</span>' : button("follow-run", "Follow live", "activity", "small")) : `<span class="badge gray">Session ${ui.step + 1}</span>`;
     const mood = item => item.status === "running" ? "running" : item.status === "waiting_approval" ? "waiting" : "";
     const actionMark = ["running", "waiting_approval", "paused"].includes(run.status) ? agentIcon(activeStep.agent, true, mood(activeStep)) : icon(run.status === "succeeded" ? "check" : run.status === "failed" ? "alert" : "activity");
-    return `<section class="next-action ${run.status === "waiting_approval" ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${nextAction}</h2><p>${detail}</p></div><div class="actions">${approvalActions}</div></section>
-      <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Conversations and outputs are saved together</span></div><div class="run-progress" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map(item => `<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)}"></span>`).join("")}</div>
-      <section class="panel run-grid"><aside class="run-steps" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => `<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${statusNames[item.status]}</small></span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.agent.model)} / ${authName(step.agent.auth)}</p></div></div>${followControl}</div><nav class="session-tabs" aria-label="Session content">${[["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"]].map(([id, label]) => `<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${label}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div><div class="session-foot">${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? "artifact" : "artifacts"}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${evidenceView(run)}</section>`;
+    return `<section class="next-action ${run.status === "waiting_approval" ? "needs-action" : run.status === "succeeded" ? "is-done" : ""}${ui.freshRun === run.id ? " is-fresh" : ""}" style="${agentStyle(activeStep.agent)}" aria-label="Task status"><span class="next-action-icon">${actionMark}</span><div class="next-action-copy"><h2>${nextAction}</h2><p>${detail}</p></div><div class="actions">${approvalActions}</div></section>
+      <div class="progress-label"><span>${statusBadge(run.status)} ${completed} of ${run.steps.length} steps complete</span><span>Conversations and outputs are saved together</span></div><div class="run-progress${ui.freshRun === run.id ? " is-fresh" : ""}" aria-label="${completed} of ${run.steps.length} steps complete">${run.steps.map((item, index) => `<span class="${item.status === "succeeded" ? "done" : item.status}" style="${agentStyle(item.agent)};--i:${index}"></span>`).join("")}</div>
+      <section class="panel run-grid"><aside class="run-steps${ui.freshRun === run.id ? " is-fresh" : ""}" aria-label="Run sessions"><div class="eyebrow">Your team</div>${run.steps.map((item, index) => `<button class="run-step ${index === ui.step ? "active" : ""}" data-action="run-step" data-index="${index}" data-status="${item.status}" style="${agentStyle(item.agent)}" aria-label="View ${escape(item.agent.name)} session" aria-pressed="${index === ui.step}">${agentIcon(item.agent, false, mood(item))}<span><strong>${escape(item.agent.name)}</strong><small>${statusNames[item.status]}</small></span>${item.status === "succeeded" ? icon("check", "step-check") : ""}</button>`).join("")}<div class="session-legend">${icon("leaf")}A fresh session for each step.</div></aside><div class="session" style="${agentStyle(step.agent)}"><div class="session-head"><div class="session-identity">${agentIcon(step.agent, false, mood(step))}<div><h2>${escape(step.agent.name)}</h2><p>${escape(step.agent.model)} / ${authName(step.agent.auth)}</p></div></div>${followControl}</div><nav class="session-tabs" aria-label="Session content">${[["conversation", "Conversation"], ["tools", "Tool activity"], ["handoff", "Handoff"]].map(([id, label]) => `<button class="tab ${ui.sessionTab === id ? "active" : ""}" aria-pressed="${ui.sessionTab === id}" data-action="session-tab" data-tab="${id}">${label}</button>`).join("")}</nav><div class="session-content">${ui.sessionTab === "handoff" ? handoffView(step, run) : messagesView(step)}</div><div class="session-foot">${icon("leaf")}This session received ${step.receivedArtifacts.length} ${step.receivedArtifacts.length === 1 ? "artifact" : "artifacts"}. ${button("session-tab", "View handoff", "arrow", "text small", 'data-tab="handoff"')}</div></div>${evidenceView(run)}</section>`;
   }
 
   function messagesView(step) {
@@ -726,12 +765,13 @@
     else if (action === "run") startRun();
     else if (action === "pause") engine.pause();
     else if (action === "resume") engine.resume();
-    else if (action === "approve") { engine.approve(); stamp("Approved"); }
+    else if (action === "approve") engine.approve();
     else if (action === "use-idea") {
       const brief = document.getElementById("task-brief");
       state.brief = briefIdeas[Number(target.dataset.index)]; persist();
       brief.value = state.brief; brief.focus();
       const composer = brief.closest(".task-composer");
+      listen();
       composer.classList.remove("idea-flash"); void composer.offsetWidth; composer.classList.add("idea-flash");
     }
     else if (action === "cancel") engine.cancel();
@@ -935,7 +975,7 @@
   document.addEventListener("input", event => {
     if (event.target.id === "project-name") ui.projectDraft.name = event.target.value;
     if (event.target.id === "project-path") ui.projectDraft.path = event.target.value;
-    if (event.target.id === "task-brief") { state.brief = event.target.value; persist(); }
+    if (event.target.id === "task-brief") { state.brief = event.target.value; persist(); listen(); }
     if (event.target.id === "skill-search") { ui.skillQuery = event.target.value; document.getElementById("skill-rows").innerHTML = skillRows(ui.skillQuery); }
     if (event.target.id === "picker-search") { ui.pickerQuery = event.target.value; document.getElementById("picker-rows").innerHTML = skillRows(ui.pickerQuery, true); }
   });
@@ -954,23 +994,6 @@
       }
     }
     if (event.key === "Escape" && ui.linkFrom) { ui.linkFrom = null; render(); }
-  });
-  let lookFrame = 0;
-  document.addEventListener("pointermove", event => {
-    if (!lookFrame) lookFrame = requestAnimationFrame(() => {
-      lookFrame = 0;
-      document.documentElement.style.setProperty("--look-x", (event.clientX / innerWidth * 2 - 1).toFixed(2));
-      document.documentElement.style.setProperty("--look-y", (event.clientY / innerHeight * 2 - 1).toFixed(2));
-    });
-    const card = event.target.closest?.(".tilt");
-    if (!card || reducedMotion.matches) return;
-    const box = card.getBoundingClientRect();
-    card.style.setProperty("--tilt-x", `${(((event.clientX - box.left) / box.width) - .5) * 8}deg`);
-    card.style.setProperty("--tilt-y", `${(.5 - ((event.clientY - box.top) / box.height)) * 8}deg`);
-  });
-  document.addEventListener("pointerout", event => {
-    const card = event.target.closest?.(".tilt");
-    if (card && !card.contains(event.relatedTarget)) { card.style.removeProperty("--tilt-x"); card.style.removeProperty("--tilt-y"); }
   });
   mobileNavigation.addEventListener("change", () => { ui.navigationOpen = false; ui.navigationActions = false; render(true); });
   modal.addEventListener("cancel", () => { clearTimeout(connectionTimer); ui.pickerDraft = null; ui.pickerTarget = null; ui.folderRequest = null; });
